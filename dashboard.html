@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Vibration Analysis Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            margin-left: 10px;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-online { background-color: #27ae60; }
+        .status-offline { background-color: #e74c3c; }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            border-left: 5px solid #3498db;
+        }
+        
+        .severity-card {
+            text-align: center;
+            font-size: 1.2em;
+        }
+        
+        .severity-normal {
+            border-left-color: #27ae60;
+            background: linear-gradient(135deg, #d5f4e6 0%, #abebc6 100%);
+        }
+        
+        .severity-ringan {
+            border-left-color: #f39c12;
+            background: linear-gradient(135deg, #fef9e7 0%, #fdeaa7 100%);
+        }
+        
+        .severity-berat {
+            border-left-color: #e74c3c;
+            background: linear-gradient(135deg, #fadbd8 0%, #f1948a 100%);
+        }
+        
+        .severity-unknown {
+            border-left-color: #95a5a6;
+            background: linear-gradient(135deg, #ecf0f1 0%, #bdc3c7 100%);
+        }
+        
+        .severity-text {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .confidence-bar {
+            width: 100%;
+            height: 20px;
+            background: #ecf0f1;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #e74c3c, #f39c12, #27ae60);
+            transition: width 0.5s ease;
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin: 20px 0;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+        
+        .btn-success {
+            background: #27ae60;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #229954;
+        }
+        
+        .btn-warning {
+            background: #f39c12;
+            color: white;
+        }
+        
+        .btn-warning:hover {
+            background: #e67e22;
+        }
+        
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+        
+        .log-container {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        .log-info { background: #3498db; }
+        .log-success { background: #27ae60; }
+        .log-warning { background: #f39c12; }
+        .log-error { background: #e74c3c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Real-time Vibration Analysis Dashboard</h1>
+            <p>ESP32 S3 + ADXL345 + Isolation Forest ML</p>
+            <div>
+                Status: <span id="connection-status">Connecting...</span>
+                <span id="status-indicator" class="status-indicator status-offline"></span>
+            </div>
+        </div>
+        
+        <div class="dashboard-grid">
+            <!-- Current Status Card -->
+            <div class="card severity-card" id="severity-card">
+                <h3>Current Vibration Status</h3>
+                <div class="severity-text" id="severity-text">UNKNOWN</div>
+                <div>Confidence: <span id="confidence-text">0%</span></div>
+                <div class="confidence-bar">
+                    <div class="confidence-fill" id="confidence-fill" style="width: 0%"></div>
+                </div>
+                <div>Last Update: <span id="last-update">Never</span></div>
+            </div>
+            
+            <!-- Features Card -->
+            <div class="card">
+                <h3>Vibration Features</h3>
+                <div id="features-display">
+                    <p>Waiting for data...</p>
+                </div>
+            </div>
+            
+            <!-- Controls Card -->
+            <div class="card">
+                <h3>System Controls</h3>
+                <div class="controls">
+                    <button class="btn btn-primary" onclick="checkStatus()">Check Status</button>
+                    <button class="btn btn-success" onclick="clearBuffer()">Clear Buffer</button>
+                    <button class="btn btn-warning" onclick="toggleAutoRefresh()">Auto Refresh: <span id="auto-refresh-status">ON</span></button>
+                </div>
+            </div>
+            
+            <!-- Chart Card -->
+            <div class="card">
+                <h3>Vibration Trend</h3>
+                <div class="chart-container">
+                    <canvas id="vibrationChart"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Log Section -->
+        <div style="padding: 20px;">
+            <h3>System Log</h3>
+            <div class="log-container" id="log-container">
+                <div class="log-entry log-info">Dashboard initialized...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const SERVER_URL = 'http://localhost:5000';
+        let autoRefresh = true;
+        let chart;
+        let dataPoints = [];
+        
+        // Initialize chart
+        function initChart() {
+            const ctx = document.getElementById('vibrationChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'RMS X',
+                        data: [],
+                        borderColor: '#e74c3c',
+                        backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                        tension: 0.4
+                    }, {
+                        label: 'RMS Y',
+                        data: [],
+                        borderColor: '#f39c12',
+                        backgroundColor: 'rgba(243, 156, 18, 0.1)',
+                        tension: 0.4
+                    }, {
+                        label: 'RMS Z',
+                        data: [],
+                        borderColor: '#27ae60',
+                        backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'RMS Value'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Time'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top'
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Add log entry
+        function addLog(message, type = 'info') {
+            const logContainer = document.getElementById('log-container');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            
+            // Keep only last 50 entries
+            while (logContainer.children.length > 50) {
+                logContainer.removeChild(logContainer.firstChild);
+            }
+        }
+        
+        // Update severity display
+        function updateSeverity(severity, confidence) {
+            const card = document.getElementById('severity-card');
+            const text = document.getElementById('severity-text');
+            const confidenceText = document.getElementById('confidence-text');
+            const confidenceFill = document.getElementById('confidence-fill');
+            
+            // Remove all severity classes
+            card.className = 'card severity-card';
+            
+            // Add appropriate class
+            switch(severity.toUpperCase()) {
+                case 'NORMAL':
+                    card.classList.add('severity-normal');
+                    break;
+                case 'RINGAN':
+                    card.classList.add('severity-ringan');
+                    break;
+                case 'BERAT':
+                    card.classList.add('severity-berat');
+                    break;
+                default:
+                    card.classList.add('severity-unknown');
+            }
+            
+            text.textContent = severity.toUpperCase();
+            confidenceText.textContent = `${(confidence * 100).toFixed(1)}%`;
+            confidenceFill.style.width = `${confidence * 100}%`;
+            
+            document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+        }
+        
+        // Update features display
+        function updateFeatures(features) {
+            const display = document.getElementById('features-display');
+            display.innerHTML = `
+                <p><strong>RMS X:</strong> ${features.rms_x}</p>
+                <p><strong>RMS Y:</strong> ${features.rms_y}</p>
+                <p><strong>RMS Z:</strong> ${features.rms_z}</p>
+                <p><strong>PC1:</strong> ${features.PC1}</p>
+                <p><strong>PC2:</strong> ${features.PC2}</p>
+            `;
+        }
+        
+        // Update chart
+        function updateChart(features, timestamp) {
+            const timeLabel = new Date(timestamp).toLocaleTimeString();
+            
+            // Add data points
+            dataPoints.push({
+                time: timeLabel,
+                rmsX: features.rms_x,
+                rmsY: features.rms_y,
+                rmsZ: features.rms_z
+            });
+            
+            // Keep only last 20 points
+            if (dataPoints.length > 20) {
+                dataPoints.shift();
+            }
+            
+            // Update chart
+            chart.data.labels = dataPoints.map(p => p.time);
+            chart.data.datasets[0].data = dataPoints.map(p => p.rmsX);
+            chart.data.datasets[1].data = dataPoints.map(p => p.rmsY);
+            chart.data.datasets[2].data = dataPoints.map(p => p.rmsZ);
+            chart.update('none');
+        }
+        
+        // Check server status
+        async function checkStatus() {
+            try {
+                const response = await fetch(`${SERVER_URL}/status`);
+                const data = await response.json();
+                
+                const statusElement = document.getElementById('connection-status');
+                const indicator = document.getElementById('status-indicator');
+                
+                if (data.status === 'RUNNING') {
+                    statusElement.textContent = 'Connected';
+                    indicator.className = 'status-indicator status-online';
+                    addLog('Server status: Connected', 'success');
+                } else {
+                    statusElement.textContent = 'Disconnected';
+                    indicator.className = 'status-indicator status-offline';
+                    addLog('Server status: Disconnected', 'error');
+                }
+            } catch (error) {
+                document.getElementById('connection-status').textContent = 'Error';
+                document.getElementById('status-indicator').className = 'status-indicator status-offline';
+                addLog(`Status check failed: ${error.message}`, 'error');
+            }
+        }
+        
+        // Clear buffer
+        async function clearBuffer() {
+            try {
+                const response = await fetch(`${SERVER_URL}/clear_buffer`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                addLog(`Buffer cleared: ${data.status}`, 'success');
+            } catch (error) {
+                addLog(`Failed to clear buffer: ${error.message}`, 'error');
+            }
+        }
+        
+        // Toggle auto refresh
+        function toggleAutoRefresh() {
+            autoRefresh = !autoRefresh;
+            const statusElement = document.getElementById('auto-refresh-status');
+            statusElement.textContent = autoRefresh ? 'ON' : 'OFF';
+            addLog(`Auto refresh ${autoRefresh ? 'enabled' : 'disabled'}`, 'info');
+        }
+        
+        // Simulate real-time data (for testing)
+        function simulateData() {
+            const severities = ['NORMAL', 'RINGAN', 'BERAT'];
+            const randomSeverity = severities[Math.floor(Math.random() * severities.length)];
+            const randomConfidence = Math.random();
+            
+            const mockFeatures = {
+                rms_x: (Math.random() * 3).toFixed(3),
+                rms_y: (Math.random() * 3).toFixed(3),
+                rms_z: (Math.random() * 3).toFixed(3),
+                PC1: (Math.random() * 2 - 1).toFixed(3),
+                PC2: (Math.random() * 2 - 1).toFixed(3)
+            };
+            
+            updateSeverity(randomSeverity, randomConfidence);
+            updateFeatures(mockFeatures);
+            updateChart(mockFeatures, Date.now());
+            
+            addLog(`Simulated prediction: ${randomSeverity} (${(randomConfidence * 100).toFixed(1)}%)`, 'info');
+        }
+        
+        // Initialize dashboard
+        function initDashboard() {
+            initChart();
+            checkStatus();
+            addLog('Dashboard initialized successfully', 'success');
+            
+            // Check status every 5 seconds
+            setInterval(checkStatus, 5000);
+            
+            // Simulate data every 2 seconds (for testing)
+            if (autoRefresh) {
+                setInterval(simulateData, 2000);
+            }
+        }
+        
+        // Start dashboard when page loads
+        window.addEventListener('load', initDashboard);
+    </script>
+</body>
+</html> 
