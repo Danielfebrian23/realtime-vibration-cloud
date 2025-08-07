@@ -10,6 +10,7 @@ import json
 from datetime import datetime
 import threading
 import time
+import os
 import sys
 
 # Optional Telegram imports
@@ -468,10 +469,12 @@ if __name__ == '__main__':
     
     # Jalankan Flask di thread terpisah
     def run_flask():
-        print("Starting Flask server...")
-        print("Server will be available at: http://localhost:5000")
-        print("Prediction endpoint: http://localhost:5000/predict")
-        app.run(host='0.0.0.0', port=5000, debug=False)
+        # Get port from environment variable (Railway) or use default
+        port = int(os.environ.get('PORT', 5000))
+        print(f"Starting Flask server on port {port}...")
+        print(f"Server will be available at: http://localhost:{port}")
+        print(f"Prediction endpoint: http://localhost:{port}/predict")
+        app.run(host='0.0.0.0', port=port, debug=False)
     
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
@@ -495,7 +498,8 @@ if __name__ == '__main__':
         if not telegram_success:
             print("Telegram bot failed to start. Continuing with Flask server only...")
         
-        print("Flask server is still running at http://localhost:5000")
+        port = int(os.environ.get('PORT', 5000))
+        print(f"Flask server is still running at http://localhost:{port}")
         print("Press CTRL+C to quit")
         try:
             while True:
@@ -504,7 +508,8 @@ if __name__ == '__main__':
             print("\nShutting down server...")
     else:
         print("Running Flask server only (no Telegram bot)")
-        print("Flask server is running at http://localhost:5000")
+        port = int(os.environ.get('PORT', 5000))
+        print(f"Flask server is running at http://localhost:{port}")
         print("Press CTRL+C to quit")
         
         try:
