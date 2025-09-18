@@ -556,16 +556,6 @@ if TELEGRAM_AVAILABLE:
         """Start Telegram bot with better error handling"""
         try:
             print("Initializing Telegram bot...")
-            # Check for existing bot instances first
-            try:
-                test_app = Application.builder().token(TELEGRAM_TOKEN).build()
-                # Try to get bot info to check if token is valid
-                test_app.initialize()
-                test_app.shutdown()
-            except Exception as e:
-                print(f"Bot token validation failed: {e}")
-                return False
-            
             application = Application.builder().token(TELEGRAM_TOKEN).build()
             
             # Add handlers
@@ -590,7 +580,9 @@ if TELEGRAM_AVAILABLE:
             application.run_polling(
                 allowed_updates=Update.ALL_TYPES, 
                 drop_pending_updates=True,
-                close_loop=False
+                close_loop=False,
+                timeout=30,
+                read_timeout=30
             )
             
         except Exception as e:
@@ -1125,8 +1117,8 @@ if __name__ == '__main__':
         telegram_success = False
         try:
             print("Starting Telegram bot...")
-            # Add delay to avoid conflict
-            time.sleep(5)
+            # Add longer delay to avoid conflict
+            time.sleep(10)
             telegram_success = main_telegram()
         except KeyboardInterrupt:
             print("\nShutting down server...")
