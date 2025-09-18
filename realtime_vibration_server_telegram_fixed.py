@@ -212,7 +212,8 @@ if TELEGRAM_AVAILABLE:
                     await update.message.reply_text("⚠️ Maksimal 60 menit. Menggunakan 60 menit.")
             
             # Request data from Flask server
-            url = f"http://localhost:5000/history?minutes={minutes}"
+            port = int(os.environ.get('PORT', 5000))
+            url = f"http://localhost:{port}/history?minutes={minutes}"
             response = requests.get(url, timeout=5)
             data = response.json()
             
@@ -377,7 +378,8 @@ if TELEGRAM_AVAILABLE:
                         await update.message.reply_text("⚠️ Maksimal 120 menit. Menggunakan 120 menit.")
             
             # Start recording via API
-            url = "http://localhost:5000/record_start"
+            port = int(os.environ.get('PORT', 5000))
+            url = f"http://localhost:{port}/record_start"
             data = {
                 'duration_minutes': duration_minutes,
                 'label': label
@@ -410,7 +412,8 @@ if TELEGRAM_AVAILABLE:
         
         try:
             # Stop recording via API
-            url = "http://localhost:5000/record_stop"
+            port = int(os.environ.get('PORT', 5000))
+            url = f"http://localhost:{port}/record_stop"
             response = requests.post(url, timeout=5)
             result = response.json()
             
@@ -446,7 +449,8 @@ if TELEGRAM_AVAILABLE:
         
         try:
             # Get recording status via API
-            url = "http://localhost:5000/record_status"
+            port = int(os.environ.get('PORT', 5000))
+            url = f"http://localhost:{port}/record_status"
             response = requests.get(url, timeout=5)
             result = response.json()
             
@@ -492,7 +496,8 @@ if TELEGRAM_AVAILABLE:
             label = context.args[0]
             
             # Export recording via API
-            url = f"http://localhost:5000/record_export/{label}"
+            port = int(os.environ.get('PORT', 5000))
+            url = f"http://localhost:{port}/record_export/{label}"
             response = requests.get(url, timeout=10)
             result = response.json()
             
