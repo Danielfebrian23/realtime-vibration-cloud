@@ -556,6 +556,16 @@ if TELEGRAM_AVAILABLE:
         """Start Telegram bot with better error handling"""
         try:
             print("Initializing Telegram bot...")
+            # Check for existing bot instances first
+            try:
+                test_app = Application.builder().token(TELEGRAM_TOKEN).build()
+                # Try to get bot info to check if token is valid
+                test_app.initialize()
+                test_app.shutdown()
+            except Exception as e:
+                print(f"Bot token validation failed: {e}")
+                return False
+            
             application = Application.builder().token(TELEGRAM_TOKEN).build()
             
             # Add handlers
@@ -923,6 +933,12 @@ def predict_vibration():
         z_data = data['z']
         timestamp = data.get('timestamp', int(time.time() * 1000))
         
+        # Debug logging
+        print(f"Received data: {len(x_data)} samples, timestamp: {timestamp}")
+        print(f"X range: {min(x_data):.3f} to {max(x_data):.3f}")
+        print(f"Y range: {min(y_data):.3f} to {max(y_data):.3f}")
+        print(f"Z range: {min(z_data):.3f} to {max(z_data):.3f}")
+        
         # Add to buffer
         with buffer_lock:
             for i in range(len(x_data)):
@@ -964,8 +980,23 @@ def predict_vibration():
                 'status': 'WAITING'
             }), 200
         
+        # Validate features before classification
+        if not all(key in features for key in ['rms_x', 'rms_y', 'rms_z', 'PC1', 'PC2']):
+            print(f"Invalid features: {features}")
+            return jsonify({
+                'error': 'Invalid features extracted',
+                'status': 'ERROR'
+            }), 400
+        
         # Classify vibration
-        severity, confidence = classify_vibration(features)
+        try:
+            severity, confidence = classify_vibration(features)
+        except Exception as e:
+            print(f"Classification error: {e}")
+            return jsonify({
+                'error': f'Classification failed: {str(e)}',
+                'status': 'ERROR'
+            }), 500
         
         # Update last_status dengan penjelasan dan tips yang sesuai
         last_status['severity'] = severity
@@ -1094,6 +1125,8 @@ if __name__ == '__main__':
         telegram_success = False
         try:
             print("Starting Telegram bot...")
+            # Add delay to avoid conflict
+            time.sleep(5)
             telegram_success = main_telegram()
         except KeyboardInterrupt:
             print("\nShutting down server...")
