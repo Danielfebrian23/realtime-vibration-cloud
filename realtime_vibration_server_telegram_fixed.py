@@ -13,6 +13,10 @@ import time
 import os
 import sys
 
+from dotenv import load_dotenv
+load_dotenv()
+
+
 # Optional Telegram imports
 try:
     from telegram import Update
@@ -54,12 +58,15 @@ recording_status = {
 recording_data = []
 recording_lock = threading.Lock()
 
+
+
 # Telegram configuration (only if available)
 if TELEGRAM_AVAILABLE:
-    TELEGRAM_TOKEN = '7755530909:AAFkS6jH2fMT5X-Kp8hubcsl9g-t23PJqdk'
-    AUTHORIZED_USER_ID = 6080177529
-    ESP32_IP = '192.168.43.223'  # Changed to match the IP where data is coming from
-    ESP32_HTTP_PORT = 80
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+    AUTHORIZED_USER_ID = int(os.getenv("AUTHORIZED_USER_ID"))
+    PUBLIC_URL = os.getenv("PUBLIC_URL")
+    ESP32_IP = os.getenv("ESP32_IP")
+    ESP32_HTTP_PORT = int(os.getenv("ESP32_HTTP_PORT"))
 
 # Simpan status terakhir
 last_status = {
@@ -212,8 +219,7 @@ if TELEGRAM_AVAILABLE:
                     await update.message.reply_text("⚠️ Maksimal 60 menit. Menggunakan 60 menit.")
             
             # Request data from Flask server
-            port = int(os.environ.get('PORT', 5000))
-            url = f"http://localhost:{port}/history?minutes={minutes}"
+            url = f"{PUBLIC_URL}/history?minutes={minutes}"
             response = requests.get(url, timeout=5)
             data = response.json()
             
@@ -378,8 +384,7 @@ if TELEGRAM_AVAILABLE:
                         await update.message.reply_text("⚠️ Maksimal 120 menit. Menggunakan 120 menit.")
             
             # Start recording via API
-            port = int(os.environ.get('PORT', 5000))
-            url = f"http://localhost:{port}/record_start"
+            url = f"{PUBLIC_URL}/record_start"
             data = {
                 'duration_minutes': duration_minutes,
                 'label': label
@@ -412,8 +417,7 @@ if TELEGRAM_AVAILABLE:
         
         try:
             # Stop recording via API
-            port = int(os.environ.get('PORT', 5000))
-            url = f"http://localhost:{port}/record_stop"
+            url = f"{PUBLIC_URL}/record_stop"
             response = requests.post(url, timeout=5)
             result = response.json()
             
@@ -449,8 +453,7 @@ if TELEGRAM_AVAILABLE:
         
         try:
             # Get recording status via API
-            port = int(os.environ.get('PORT', 5000))
-            url = f"http://localhost:{port}/record_status"
+            url = f"{PUBLIC_URL}/record_status"
             response = requests.get(url, timeout=5)
             result = response.json()
             
@@ -496,8 +499,7 @@ if TELEGRAM_AVAILABLE:
             label = context.args[0]
             
             # Export recording via API
-            port = int(os.environ.get('PORT', 5000))
-            url = f"http://localhost:{port}/record_export/{label}"
+            url = f"{PUBLIC_URL}/record_export/{label}"
             response = requests.get(url, timeout=10)
             result = response.json()
             
