@@ -12,6 +12,8 @@ import threading
 import time
 import os
 import sys
+import scipy.stats
+from scipy import signal
 
 try:
     from dotenv import load_dotenv
@@ -66,10 +68,38 @@ recording_lock = threading.Lock()
 # Telegram configuration (only if available)
 if TELEGRAM_AVAILABLE:
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-    AUTHORIZED_USER_ID = int(os.getenv("AUTHORIZED_USER_ID"))
+    AUTHORIZED_USER_ID_RAW = os.getenv("AUTHORIZED_USER_ID")
     PUBLIC_URL = os.getenv("PUBLIC_URL")
     ESP32_IP = os.getenv("ESP32_IP")
-    ESP32_HTTP_PORT = int(os.getenv("ESP32_HTTP_PORT"))
+    ESP32_HTTP_PORT_RAW = os.getenv("ESP32_HTTP_PORT")
+
+    missing_envs = [
+        name for name, val in [
+            ("TELEGRAM_TOKEN", TELEGRAM_TOKEN),
+            ("AUTHORIZED_USER_ID", AUTHORIZED_USER_ID_RAW),
+            ("PUBLIC_URL", PUBLIC_URL),
+            ("ESP32_IP", ESP32_IP),
+            ("ESP32_HTTP_PORT", ESP32_HTTP_PORT_RAW),
+        ] if not val
+    ]
+
+    try:
+        AUTHORIZED_USER_ID = int(AUTHORIZED_USER_ID_RAW) if AUTHORIZED_USER_ID_RAW else None
+    except Exception:
+        AUTHORIZED_USER_ID = None
+        if "AUTHORIZED_USER_ID" not in missing_envs:
+            missing_envs.append("AUTHORIZED_USER_ID (invalid integer)")
+
+    try:
+        ESP32_HTTP_PORT = int(ESP32_HTTP_PORT_RAW) if ESP32_HTTP_PORT_RAW else None
+    except Exception:
+        ESP32_HTTP_PORT = None
+        if "ESP32_HTTP_PORT" not in missing_envs:
+            missing_envs.append("ESP32_HTTP_PORT (invalid integer)")
+
+    if missing_envs:
+        print(f"Missing/invalid Telegram env vars: {', '.join(missing_envs)}. Telegram bot will be disabled.")
+        TELEGRAM_AVAILABLE = False
 
 # Simpan status terakhir
 last_status = {
@@ -404,7 +434,7 @@ if TELEGRAM_AVAILABLE:
                 message += f"🔄 Gunakan /record_status untuk cek progress\n"
                 message += f"⏹️ Gunakan /record_stop untuk stop recording"
                 
-                await update.message.reply_text(message, parse_mode='Markdown')
+                await update.message.reply_text(message)
             else:
                 await update.message.reply_text(f"❌ Error: {result.get('error', 'Unknown error')}")
                 
@@ -440,7 +470,7 @@ if TELEGRAM_AVAILABLE:
                 message += f"💾 Data tersimpan di server\n"
                 message += f"📥 Gunakan /record_export {label} untuk download"
                 
-                await update.message.reply_text(message, parse_mode='Markdown')
+                await update.message.reply_text(message)
             else:
                 await update.message.reply_text(f"❌ Error: {result.get('error', 'Unknown error')}")
                 
@@ -480,7 +510,7 @@ if TELEGRAM_AVAILABLE:
                 message += f"`{progress_bar}` {progress_percent:.1f}%\n\n"
                 message += f"⏹️ Gunakan /record_stop untuk stop"
                 
-                await update.message.reply_text(message, parse_mode='Markdown')
+                await update.message.reply_text(message)
             else:
                 await update.message.reply_text("📹 Tidak ada recording yang aktif.\n\nGunakan /record_start untuk mulai recording.")
                 
@@ -618,129 +648,171 @@ def train_models_from_data():
         # Load training data
         df_normal_ringan = pd.read_excel("Dataset PCA (Normal 80 + Ringan 20).xlsx")
         df_normal_berat = pd.read_excel("Dataset PCA (Normal 80 + Berat 20).xlsx")
-        # Combine datasets
-        df_combined = pd.concat([df_normal_ringan, df_normal_berat], ignore_index=True)
-        df_combined.columns = df_combined.columns.str.strip()
         
-        # Prepare raw features consistently with live pipeline
-        raw_features = df_combined[["X", "Y", "Z"]].dropna()
+        # Extract ONLY normal data from both datasets
+        normal_data = pd.concat([
+            df_normal_ringan[df_normal_ringan['Source'] == 'Suprax(Normal)'],
+            df_normal_berat[df_normal_berat['Source'] == 'Suprax(Normal)']
+        ], ignore_index=True)
         
-        # Fit scaler and PCA on raw XYZ (same pipeline used in live inference)
+        # Prepare raw features from normal data only (center to remove global offsets)
+        raw = normal_data[["X ", "Y ", "Z "]].dropna().values
+        # Global centering to reduce gravity/offset bias in PCA space
+        raw_centered = raw - raw.mean(axis=0, keepdims=True)
+        
+        # Fit scaler and PCA on centered normal data only
         scaler_model = StandardScaler()
-        X_scaled = scaler_model.fit_transform(raw_features)
+        X_scaled = scaler_model.fit_transform(raw_centered)
         pca_model = PCA(n_components=2, random_state=42)
         pca_model.fit(X_scaled)
         
-        # Create training features for Isolation Forest in the same PC space as live
+        # Create training features for Isolation Forest in the same PC space
         pca_features_train = pca_model.transform(X_scaled)
         
-        # Train Isolation Forest on PC1/PC2 from the SAME pipeline (aligned with live inference)
+        # Train Isolation Forest ONLY on normal data with higher sensitivity
         iso_forest_model = IsolationForest(
-            contamination=0.02,  # assume ~2% anomalies to be conservative
+            contamination=0.15,  # Increased from 0.02 to 0.15 for better sensitivity
             random_state=42,
             n_estimators=200,
             bootstrap=False
         )
         iso_forest_model.fit(pca_features_train)
         
-        print("Models trained successfully (aligned PCA + IF on PC1/PC2)!")
+        print("Models trained successfully (IF trained on NORMAL data only with higher sensitivity)!")
     except Exception as e:
         print(f"Error training models: {e}")
         # Fallback: create simple models
-        iso_forest_model = IsolationForest(contamination=0.05, random_state=42)
+        iso_forest_model = IsolationForest(contamination=0.15, random_state=42)
         pca_model = PCA(n_components=2, random_state=42)
         scaler_model = StandardScaler()
 
+def remove_gravity_dc(data, cutoff=0.1, fs=10):
+    """Remove DC component (gravity) using high-pass filter"""
+    if len(data) < 4:  # Need minimum samples for filter
+        return data
+    try:
+        b, a = signal.butter(4, cutoff/(fs/2), btype='high')
+        return signal.filtfilt(b, a, data)
+    except:
+        # Fallback: simple detrend
+        return data - np.mean(data)
+
 def extract_features_from_buffer(data_buffer):
-    """Extract features from vibration data buffer"""
-    if len(data_buffer) < 10:
+    """Extract features from vibration data buffer with improved sensitivity"""
+    if len(data_buffer) < 30:  # Increased minimum buffer size
         return None
+    
     # Convert to DataFrame
     df = pd.DataFrame(data_buffer, columns=['x', 'y', 'z'])
-    # Calculate statistical features
+    
+    # Apply high-pass filter to remove gravity DC component
+    x_filtered = remove_gravity_dc(df['x'].values)
+    y_filtered = remove_gravity_dc(df['y'].values)
+    z_filtered = remove_gravity_dc(df['z'].values)
+    
+    # Calculate enhanced statistical features
     features = {
-        'mean_x': df['x'].mean(),
-        'mean_y': df['y'].mean(),
-        'mean_z': df['z'].mean(),
-        'std_x': df['x'].std(),
-        'std_y': df['y'].std(),
-        'std_z': df['z'].std(),
-        'max_x': df['x'].max(),
-        'max_y': df['y'].max(),
-        'max_z': df['z'].max(),
-        'min_x': df['x'].min(),
-        'min_y': df['y'].min(),
-        'min_z': df['z'].min(),
-        'rms_x': np.sqrt(np.mean(df['x']**2)),
-        'rms_y': np.sqrt(np.mean(df['y']**2)),
-        'rms_z': np.sqrt(np.mean(df['z']**2))
+        # Basic statistical features
+        'mean_x': np.mean(x_filtered),
+        'mean_y': np.mean(y_filtered),
+        'mean_z': np.mean(z_filtered),
+        'std_x': np.std(x_filtered),
+        'std_y': np.std(y_filtered),
+        'std_z': np.std(z_filtered),
+        
+        # RMS features (more sensitive to vibration)
+        'rms_x': np.sqrt(np.mean(x_filtered**2)),
+        'rms_y': np.sqrt(np.mean(y_filtered**2)),
+        'rms_z': np.sqrt(np.mean(z_filtered**2)),
+        
+        # Peak-to-peak features (detect extreme vibrations)
+        'peak_to_peak_x': np.max(x_filtered) - np.min(x_filtered),
+        'peak_to_peak_y': np.max(y_filtered) - np.min(y_filtered),
+        'peak_to_peak_z': np.max(z_filtered) - np.min(z_filtered),
+        
+        # Higher-order statistics (detect unusual patterns)
+        'kurtosis_x': scipy.stats.kurtosis(x_filtered),
+        'kurtosis_y': scipy.stats.kurtosis(y_filtered),
+        'kurtosis_z': scipy.stats.kurtosis(z_filtered),
+        'skewness_x': scipy.stats.skew(x_filtered),
+        'skewness_y': scipy.stats.skew(y_filtered),
+        'skewness_z': scipy.stats.skew(z_filtered),
+        
+        # Range features
+        'max_x': np.max(x_filtered),
+        'max_y': np.max(y_filtered),
+        'max_z': np.max(z_filtered),
+        'min_x': np.min(x_filtered),
+        'min_y': np.min(y_filtered),
+        'min_z': np.min(z_filtered)
     }
-    # Apply PCA transformation
+    
+    # Apply PCA transformation for compatibility (use filtered means to align with features)
     if scaler_model and pca_model:
-        raw_data = df[['x', 'y', 'z']].values
-        scaled_data = scaler_model.transform(raw_data)
-        pca_features = pca_model.transform(scaled_data)
-        # Use mean of PCA components
-        features['PC1'] = pca_features[:, 0].mean()
-        features['PC2'] = pca_features[:, 1].mean()
+        # Build one representative vector from filtered signals
+        pca_input = np.array([[np.mean(x_filtered), np.mean(y_filtered), np.mean(z_filtered)]])
+        scaled_input = scaler_model.transform(pca_input)
+        pca_vec = pca_model.transform(scaled_input)
+        features['PC1'] = float(pca_vec[0, 0])
+        features['PC2'] = float(pca_vec[0, 1])
+    
     return features
 
 def classify_vibration(features):
-    """Classify vibration condition using Isolation Forest with improved PCA-based classification"""
+    """Classify vibration severity (NORMAL/RINGAN/BERAT) and confidence.
+    - Detection by IsolationForest (trained on NORMAL only)
+    - Severity by distance in PCA space
+    - Confidence by IF score + distance to thresholds
+    """
     if not is_model_loaded or iso_forest_model is None:
         return "UNKNOWN", 0.0
     try:
-        # OPSI 1: Deteksi kondisi stasioner (motor diam/idle)
-        # Calculate total RMS untuk deteksi kondisi stasioner
+        # Deteksi kondisi sangat tenang (idle/stasioner) - lebih toleran
         total_rms = np.sqrt(features['rms_x']**2 + features['rms_y']**2 + features['rms_z']**2)
-        
-        # Threshold untuk kondisi stasioner (motor diam/idle)
-        stationary_threshold = 0.15  # Tunable berdasarkan testing
-        
-        # Jika RMS total sangat rendah, langsung klasifikasi sebagai NORMAL
+        stationary_threshold = 0.30  # Increased from 0.15 to be more tolerant
         if total_rms < stationary_threshold:
-            # Motor dalam kondisi diam/idle - pasti NORMAL
-            confidence = max(0.85, 1.0 - (total_rms / stationary_threshold) * 0.15)  # 0.85-1.0
-            return "NORMAL", confidence
-        
-        # Prepare features for prediction (PC1/PC2 from live pipeline)
-        feature_vector = np.array([
-            features['PC1'], features['PC2']
-        ]).reshape(1, -1)
-        
-        # Predict anomaly score
-        anomaly_score = iso_forest_model.decision_function(feature_vector)[0]
-        is_anomaly = iso_forest_model.predict(feature_vector)[0]
-        
-        # Calculate distance from normal center (0,0) using PCA features
-        distance_from_normal = np.sqrt(features['PC1']**2 + features['PC2']**2)
-        
-        # Tuned thresholds for field stability (larger tolerance around normal)
-        ringan_threshold = 0.12
-        berat_threshold = 0.25
-        
-        # Improved classification logic using PCA distance
-        if is_anomaly == -1:  # Anomaly detected
-            if distance_from_normal > berat_threshold:
-                severity = "BERAT"
-                # For heavier anomalies, confidence increases more
-                confidence = min(0.95, 0.6 + 0.5 * min(1.0, distance_from_normal / (berat_threshold * 2)))
-            elif distance_from_normal > ringan_threshold:
-                severity = "RINGAN"
-                confidence = min(0.85, 0.5 + 0.4 * min(1.0, (distance_from_normal - ringan_threshold) / (berat_threshold - ringan_threshold)))
-            else:
-                # Close to normal but IsolationForest flagged as anomaly
-                severity = "RINGAN"
-                confidence = 0.6
-        else:
-            # No anomaly detected
+            return "NORMAL", 0.95
+
+        # Vektor fitur untuk IF (PC1/PC2)
+        feature_vector = np.array([features['PC1'], features['PC2']]).reshape(1, -1)
+        if_score = iso_forest_model.decision_function(feature_vector)[0]
+        distance = np.sqrt(features['PC1']**2 + features['PC2']**2)
+
+        # Ambang jarak (lebih konservatif untuk dinamis)
+        ringan_threshold = 0.60  
+        berat_threshold = 0.80   
+
+        # Keputusan severity dengan zona transisi yang lebih luas dan toleran
+        if if_score > -0.20 and distance < ringan_threshold:  # More tolerant IF score
             severity = "NORMAL"
-            # Higher confidence near the origin; map by inverse distance and anomaly score
-            confidence_from_distance = max(0.7, 1.0 - min(1.0, distance_from_normal / berat_threshold))
-            confidence_from_score = max(0.7, 1.0 - abs(anomaly_score))
-            confidence = max(confidence_from_distance, confidence_from_score)
-            confidence = min(confidence, 0.99)
-            
+        elif distance >= berat_threshold:
+            severity = "BERAT"
+        elif distance >= ringan_threshold:
+            severity = "RINGAN"
+        else:
+            # Zona transisi: gunakan kombinasi IF score dan distance
+            if if_score > -0.30 and distance < (ringan_threshold + berat_threshold) / 2:
+                severity = "NORMAL"
+            else:
+                severity = "RINGAN"
+
+        # Confidence calculation
+        if severity == "NORMAL":
+            # Semakin dekat pusat dan IF score tinggi → makin yakin
+            conf_from_dist = 1.0 - min(1.0, distance / max(1e-6, ringan_threshold))
+            conf_from_if = min(1.0, 0.8 + max(0.0, if_score))
+            confidence = max(0.7, 0.5 * conf_from_dist + 0.5 * conf_from_if)
+        elif severity == "RINGAN":
+            # Jarak relatif antara ringan→berat
+            span = max(1e-6, berat_threshold - ringan_threshold)
+            rel = min(1.0, max(0.0, (distance - ringan_threshold) / span))
+            confidence = max(0.6, 0.6 + 0.3 * rel)
+        else:  # BERAT
+            # Seberapa jauh melewati berat_threshold
+            rel_heavy = min(1.0, (distance - berat_threshold) / (berat_threshold))
+            confidence = max(0.7, 0.75 + 0.2 * rel_heavy)
+
+        confidence = float(min(0.99, max(0.5, confidence)))
         return severity, confidence
     except Exception as e:
         print(f"Error in classification: {e}")
@@ -779,7 +851,7 @@ def start_recording():
             recording_data.clear()
             
             # Create CSV header
-            csv_header = "timestamp,x,y,z,label,condition\n"
+            csv_header = "timestamp,x,y,z,label,condition,total_rms,distance\n"
             with open(filename, 'w') as f:
                 f.write(csv_header)
         
@@ -949,25 +1021,16 @@ def predict_vibration():
             if len(realtime_buffer) > 100:
                 realtime_buffer[:] = realtime_buffer[-100:]
         
-        # Save to recording if active
+        # Save to recording time window state (without writing yet); we'll write after classification
         with recording_lock:
             if recording_status['active']:
                 # Check if recording time is up
                 current_time = int(time.time() * 1000)
                 elapsed_ms = current_time - recording_status['start_time']
                 total_ms = recording_status['duration_minutes'] * 60 * 1000
-                
                 if elapsed_ms >= total_ms:
-                    # Auto-stop recording
                     recording_status['active'] = False
                     print(f"Recording auto-stopped after {recording_status['duration_minutes']} minutes")
-                else:
-                    # Save data to CSV
-                    for i in range(len(x_data)):
-                        csv_line = f"{timestamp},{x_data[i]},{y_data[i]},{z_data[i]},{recording_status['label']},normal\n"
-                        with open(recording_status['file_path'], 'a') as f:
-                            f.write(csv_line)
-                        recording_status['data_points'] += 1
         
         # Extract features
         features = extract_features_from_buffer(realtime_buffer)
@@ -995,6 +1058,22 @@ def predict_vibration():
                 'status': 'ERROR'
             }), 500
         
+        # Write recording samples with classified severity, total_rms, and distance
+        with recording_lock:
+            if recording_status['active']:
+                try:
+                    # Calculate total_rms and distance for this batch
+                    total_rms = np.sqrt(features['rms_x']**2 + features['rms_y']**2 + features['rms_z']**2)
+                    distance = np.sqrt(features['PC1']**2 + features['PC2']**2)
+                    
+                    with open(recording_status['file_path'], 'a') as f:
+                        for i in range(len(x_data)):
+                            csv_line = f"{timestamp},{x_data[i]},{y_data[i]},{z_data[i]},{recording_status['label']},{severity.lower()},{total_rms:.4f},{distance:.4f}\n"
+                            f.write(csv_line)
+                            recording_status['data_points'] += 1
+                except Exception as e:
+                    print(f"Error writing recording CSV: {e}")
+        
         # Update last_status dengan penjelasan dan tips yang sesuai
         last_status['severity'] = severity
         last_status['confidence'] = confidence
@@ -1017,6 +1096,7 @@ def predict_vibration():
         
         # Calculate distance from normal for monitoring
         distance_from_normal = np.sqrt(features['PC1']**2 + features['PC2']**2)
+        total_rms = np.sqrt(features['rms_x']**2 + features['rms_y']**2 + features['rms_z']**2)
         
         # Prepare response
         response = {
@@ -1027,6 +1107,7 @@ def predict_vibration():
                 'rms_x': round(features['rms_x'], 3),
                 'rms_y': round(features['rms_y'], 3),
                 'rms_z': round(features['rms_z'], 3),
+                'total_rms': round(total_rms, 4),
                 'PC1': round(features['PC1'], 3),
                 'PC2': round(features['PC2'], 3),
                 'distance_from_normal': round(distance_from_normal, 4)
@@ -1044,7 +1125,7 @@ def predict_vibration():
                     'duration_minutes': recording_status['duration_minutes']
                 }
         
-        print(f"Prediction: {severity} (confidence: {confidence:.3f})")
+        print(f"Prediction: {severity} (confidence: {confidence:.3f}, total_rms: {total_rms:.4f}, distance: {distance_from_normal:.4f})")
         return jsonify(response)
         
     except Exception as e:
