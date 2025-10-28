@@ -1,1 +1,1 @@
-web: python3 realtime_vibration_server_raw_recording.py
+web: python3.11 realtime_vibration_server_raw_recording.py
