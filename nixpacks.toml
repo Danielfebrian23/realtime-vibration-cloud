@@ -10,7 +10,8 @@ nixPkgs = [
 cmds = ["pip install --no-cache-dir -r requirements_raw_recording.txt"]
 
 [start]
-cmd = "bash start.sh"
+cmd = "python3 realtime_vibration_server_raw_recording.py"
+
 
 
 
