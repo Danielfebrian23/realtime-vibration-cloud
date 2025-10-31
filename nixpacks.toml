@@ -1,10 +1,10 @@
 providers = ["python"]
 
 [phases.setup]
-nixPkgs = ["python311Full", "pkg-config", "lapack", "blas"]
+nixPkgs = ["python312Full"]
 
 [phases.install]
-cmds = ["python3 -m pip install --no-cache-dir -r requirements_raw_recording.txt"]
+cmds = ["python3 -m ensurepip --upgrade", "python3 -m pip install --no-cache-dir -r requirements_raw_recording.txt"]
 
 [start]
 cmd = "python3 realtime_vibration_server_raw_recording.py"
