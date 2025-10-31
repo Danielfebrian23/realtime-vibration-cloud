@@ -1,15 +1,19 @@
 providers = ["python"]
 
 [phases.setup]
-nixPkgs = ["python312Full", "python312Packages.pip", "python312Packages.setuptools", "python312Packages.wheel"]
+nixPkgs = ["python312Full", "python312Packages.virtualenv"]
 
 [phases.install]
 cmds = [
-  "pip install --no-cache-dir -r requirements_raw_recording.txt"
+  "python3 -m venv /app/venv",
+  "/app/venv/bin/pip install --upgrade pip setuptools wheel",
+  "/app/venv/bin/pip install --no-cache-dir -r requirements_raw_recording.txt"
 ]
 
 [start]
-cmd = "python3 realtime_vibration_server_raw_recording.py"
+cmd = "/app/venv/bin/python realtime_vibration_server_raw_recording.py"
+
+
 
 
 
