@@ -132,29 +132,107 @@ if TELEGRAM_AVAILABLE:
                 duration_minutes = 180
                 await update.message.reply_text("⚠️ Maksimal 180 menit. Menggunakan 180 menit.")
             
-            label_parts = context.args[1].split('_')
-            if len(label_parts) < 2:
-                await update.message.reply_text("❌ **Label salah!**\n\n"
-                                              "Format label: `<road_type>_<motor_condition>`\n"
-                                              "Contoh: `jalan_lurus_normal`")
-                return
+            # Parse label with flexible parsing
+            label = context.args[1]
+            label_lower = label.lower()
             
-            road_type = label_parts[0]
-            motor_condition = '_'.join(label_parts[1:])  # Handle multi-word conditions
-            
-            # Validate road type
+            # Valid road types and motor conditions
             valid_roads = ['jalan_lurus', 'jalan_berbatu', 'jalan_menanjak']
-            if road_type not in valid_roads:
-                await update.message.reply_text(f"❌ **Road type tidak valid!**\n\n"
-                                              f"Pilih dari: {', '.join(valid_roads)}")
+            valid_conditions = ['normal', 'rusak_ringan', 'rusak_berat']
+            
+            # Try to find road type by matching from the beginning
+            road_type = None
+            motor_condition = None
+            
+            for road in valid_roads:
+                if label_lower.startswith(road.lower()):
+                    road_type = road
+                    # Get the rest after road type + underscore
+                    remaining = label_lower[len(road):].lstrip('_')
+                    if remaining:
+                        motor_condition = remaining
+                    break
+            
+            # If no road type found, try to extract from parts (more flexible)
+            if not road_type:
+                label_parts = label_lower.split('_')
+                if len(label_parts) >= 2:
+                    # Try to match road type from first two parts
+                    possible_road = f"{label_parts[0]}_{label_parts[1]}"
+                    if possible_road in valid_roads:
+                        road_type = possible_road
+                        motor_condition = '_'.join(label_parts[2:]) if len(label_parts) > 2 else None
+                    else:
+                        # Fallback: use first part as road type (for backward compatibility)
+                        road_type = label_parts[0]
+                        motor_condition = '_'.join(label_parts[1:])
+                else:
+                    road_type = label_parts[0] if label_parts else None
+                    motor_condition = None
+            
+            # Validate road type (more lenient - allow partial matches)
+            if road_type:
+                # Check if road_type matches any valid road (case insensitive, allow partial)
+                road_type_matched = None
+                for valid_road in valid_roads:
+                    if valid_road.lower() == road_type.lower() or road_type.lower() in valid_road.lower():
+                        road_type_matched = valid_road
+                        break
+                
+                if not road_type_matched:
+                    # Try to find closest match
+                    if 'lurus' in road_type.lower():
+                        road_type_matched = 'jalan_lurus'
+                    elif 'berbatu' in road_type.lower():
+                        road_type_matched = 'jalan_berbatu'
+                    elif 'menanjak' in road_type.lower():
+                        road_type_matched = 'jalan_menanjak'
+                
+                if road_type_matched:
+                    road_type = road_type_matched
+                else:
+                    await update.message.reply_text(f"❌ **Road type tidak valid!**\n\n"
+                                                  f"Pilih dari: {', '.join(valid_roads)}\n\n"
+                                                  f"Input yang diterima: `{label}`")
+                    return
+            else:
+                await update.message.reply_text(f"❌ **Label tidak valid!**\n\n"
+                                              f"Format: `/record_start <durasi> <road_type>_<motor_condition>`\n\n"
+                                              f"Contoh: `/record_start 30 jalan_lurus_normal`")
                 return
             
-            # Validate motor condition
-            valid_conditions = ['normal', 'rusak_ringan', 'rusak_berat']
-            if motor_condition not in valid_conditions:
-                await update.message.reply_text(f"❌ **Motor condition tidak valid!**\n\n"
-                                              f"Pilih dari: {', '.join(valid_conditions)}")
-                return
+            # Validate motor condition (more lenient - allow partial matches and test variations)
+            if motor_condition:
+                motor_condition_matched = None
+                motor_condition_lower = motor_condition.lower()
+                
+                # Check exact match first
+                for valid_cond in valid_conditions:
+                    if valid_cond.lower() == motor_condition_lower:
+                        motor_condition_matched = valid_cond
+                        break
+                
+                # If no exact match, try partial match
+                if not motor_condition_matched:
+                    if 'normal' in motor_condition_lower or 'test' in motor_condition_lower:
+                        motor_condition_matched = 'normal'
+                    elif 'ringan' in motor_condition_lower:
+                        motor_condition_matched = 'rusak_ringan'
+                    elif 'berat' in motor_condition_lower:
+                        motor_condition_matched = 'rusak_berat'
+                
+                if motor_condition_matched:
+                    motor_condition = motor_condition_matched
+                else:
+                    # Default to 'normal' if unclear (lenient mode)
+                    original_input = motor_condition
+                    motor_condition = 'normal'
+                    await update.message.reply_text(f"⚠️ **Motor condition tidak jelas, menggunakan 'normal'**\n\n"
+                                                  f"Input: `{original_input}`\n"
+                                                  f"Valid conditions: {', '.join(valid_conditions)}")
+            else:
+                # Default to 'normal' if no motor condition specified
+                motor_condition = 'normal'
             
             # Start recording via API
             url = f"{PUBLIC_URL}/record_start"
