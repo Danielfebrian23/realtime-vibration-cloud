@@ -20,6 +20,7 @@ try:
     from telegram import Update
     from telegram.ext import Application, CommandHandler, ContextTypes
     import requests
+    import io
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
@@ -46,11 +47,11 @@ recording_lock = threading.Lock()
 # Telegram configuration (only if available)
 if TELEGRAM_AVAILABLE:
     # Prefer RAW_* envs to avoid conflicts with realtime service. Fallback to generic names.
-    RAW_TELEGRAM_TOKEN = os.getenv("RAW_TELEGRAM_TOKEN") or os.getenv("TELEGRAM_TOKEN")
-    RAW_AUTHORIZED_USER_ID = os.getenv("RAW_AUTHORIZED_USER_ID") or os.getenv("AUTHORIZED_USER_ID")
-    RAW_PUBLIC_URL = os.getenv("RAW_PUBLIC_URL") or os.getenv("PUBLIC_URL")
-    RAW_ESP32_IP = os.getenv("RAW_ESP32_IP") or os.getenv("ESP32_IP")
-    RAW_ESP32_HTTP_PORT = os.getenv("RAW_ESP32_HTTP_PORT") or os.getenv("ESP32_HTTP_PORT")
+    RAW_TELEGRAM_TOKEN = (os.getenv("RAW_TELEGRAM_TOKEN") or os.getenv("TELEGRAM_TOKEN") or "").strip()
+    RAW_AUTHORIZED_USER_ID = (os.getenv("RAW_AUTHORIZED_USER_ID") or os.getenv("AUTHORIZED_USER_ID") or "").strip()
+    RAW_PUBLIC_URL = (os.getenv("RAW_PUBLIC_URL") or os.getenv("PUBLIC_URL") or "").strip().rstrip('/')
+    RAW_ESP32_IP = (os.getenv("RAW_ESP32_IP") or os.getenv("ESP32_IP") or "").strip()
+    RAW_ESP32_HTTP_PORT = (os.getenv("RAW_ESP32_HTTP_PORT") or os.getenv("ESP32_HTTP_PORT") or "").strip()
 
     # Bind to local variable names used throughout the file
     TELEGRAM_TOKEN = RAW_TELEGRAM_TOKEN
@@ -93,6 +94,12 @@ if TELEGRAM_AVAILABLE:
 
 # Telegram functions (only if available)
 if TELEGRAM_AVAILABLE:
+    def get_base_url():
+        """Get cleaned base URL without trailing slash or spaces"""
+        if not PUBLIC_URL:
+            return None
+        return PUBLIC_URL.rstrip('/').strip()
+    
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != AUTHORIZED_USER_ID:
             await update.message.reply_text("Maaf, Anda tidak diizinkan mengakses bot ini.")
@@ -235,38 +242,68 @@ if TELEGRAM_AVAILABLE:
                 motor_condition = 'normal'
             
             # Start recording via API
-            url = f"{PUBLIC_URL}/record_start"
+            base_url = get_base_url()
+            if not base_url:
+                await update.message.reply_text("❌ **Error: PUBLIC_URL tidak terkonfigurasi!**\n\n"
+                                              "Pastikan environment variable RAW_PUBLIC_URL atau PUBLIC_URL sudah di-set di Railway.")
+                return
+            
+            url = f"{base_url}/record_start"
+            
             data = {
                 'duration_minutes': duration_minutes,
                 'label': f"{road_type}_{motor_condition}",
                 'road_type': road_type,
                 'motor_condition': motor_condition
             }
-            response = requests.post(url, json=data, timeout=5)
-            result = response.json()
             
-            if result.get('status') == 'RECORDING_STARTED':
-                message = f"🎬 **RAW DATA RECORDING STARTED**\n\n"
-                message += f"📝 **Label**: {road_type}_{motor_condition}\n"
-                message += f"🛣️ **Road Type**: {road_type}\n"
-                message += f"🏍️ **Motor Condition**: {motor_condition}\n"
-                message += f"⏱️ **Duration**: {duration_minutes} menit\n"
-                message += f"📁 **File**: {result.get('filename', 'N/A')}\n\n"
-                message += f"📊 Data RAW akan disimpan otomatis ke CSV\n"
-                message += f"🔄 Gunakan /record_status untuk cek progress\n"
-                message += f"⏹️ Gunakan /record_stop untuk stop recording\n\n"
-                message += f"⚠️ **Pastikan ESP32 terhubung dan mengirim data!**"
+            try:
+                response = requests.post(url, json=data, timeout=10)
+                response.raise_for_status()  # Raise exception for bad status codes
+                result = response.json()
                 
-                await update.message.reply_text(message)
-            else:
-                await update.message.reply_text(f"❌ Error: {result.get('error', 'Unknown error')}")
+                if result.get('status') == 'RECORDING_STARTED':
+                    message = f"🎬 **RAW DATA RECORDING STARTED**\n\n"
+                    message += f"📝 **Label**: {road_type}_{motor_condition}\n"
+                    message += f"🛣️ **Road Type**: {road_type}\n"
+                    message += f"🏍️ **Motor Condition**: {motor_condition}\n"
+                    message += f"⏱️ **Duration**: {duration_minutes} menit\n"
+                    message += f"📁 **File**: {result.get('filename', 'N/A')}\n\n"
+                    message += f"📊 Data RAW akan disimpan otomatis ke CSV\n"
+                    message += f"🔄 Gunakan /record_status untuk cek progress\n"
+                    message += f"⏹️ Gunakan /record_stop untuk stop recording\n\n"
+                    message += f"⚠️ **Pastikan ESP32 terhubung dan mengirim data!**"
+                    
+                    await update.message.reply_text(message)
+                else:
+                    error_msg = result.get('error', 'Unknown error')
+                    await update.message.reply_text(f"❌ **Error dari server:** {error_msg}\n\n"
+                                                  f"URL: `{url}`")
+            except requests.exceptions.RequestException as e:
+                error_detail = str(e)
+                # Clean up error message
+                if "Failed to resolve" in error_detail:
+                    error_detail = f"Gagal resolve hostname. Cek PUBLIC_URL: `{base_url}`"
+                elif "Max retries exceeded" in error_detail:
+                    error_detail = f"Tidak bisa connect ke server. Cek URL: `{base_url}`"
                 
-        except ValueError:
-            await update.message.reply_text("❌ **Durasi harus berupa angka!**\n\n"
-                                          "Contoh: `/record_start 30 jalan_lurus_normal`")
-        except Exception as e:
-            print(f"Error in record_start: {e}")
-            await update.message.reply_text(f"❌ Error: {str(e)}")
+                print(f"Request error in record_start: {e}")
+                await update.message.reply_text(f"❌ **Error koneksi ke server:**\n\n"
+                                              f"{error_detail}\n\n"
+                                              f"URL yang digunakan: `{url}`\n\n"
+                                              f"Pastikan:\n"
+                                              f"1. Server RAW recording sudah running\n"
+                                              f"2. PUBLIC_URL benar di environment variables\n"
+                                              f"3. Tidak ada spasi di akhir URL")
+            except ValueError as ve:
+                await update.message.reply_text("❌ **Durasi harus berupa angka!**\n\n"
+                                              "Contoh: `/record_start 30 jalan_lurus_normal`")
+            except Exception as e:
+                print(f"Error in record_start: {e}")
+                import traceback
+                traceback.print_exc()
+                await update.message.reply_text(f"❌ **Error:** {str(e)}\n\n"
+                                              f"Tipe error: {type(e).__name__}")
 
     async def record_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Stop recording and show summary"""
@@ -275,9 +312,15 @@ if TELEGRAM_AVAILABLE:
             return
         
         try:
+            base_url = get_base_url()
+            if not base_url:
+                await update.message.reply_text("❌ **Error: PUBLIC_URL tidak terkonfigurasi!**")
+                return
+            
             # Stop recording via API
-            url = f"{PUBLIC_URL}/record_stop"
-            response = requests.post(url, timeout=5)
+            url = f"{base_url}/record_stop"
+            response = requests.post(url, timeout=10)
+            response.raise_for_status()
             result = response.json()
             
             if result.get('status') == 'RECORDING_STOPPED':
@@ -304,6 +347,9 @@ if TELEGRAM_AVAILABLE:
             else:
                 await update.message.reply_text(f"❌ Error: {result.get('error', 'Unknown error')}")
                 
+        except requests.exceptions.RequestException as e:
+            print(f"Request error in record_stop: {e}")
+            await update.message.reply_text(f"❌ **Error koneksi:** {str(e)}\n\nURL: `{get_base_url()}/record_stop`")
         except Exception as e:
             print(f"Error in record_stop: {e}")
             await update.message.reply_text(f"❌ Error: {str(e)}")
@@ -315,9 +361,15 @@ if TELEGRAM_AVAILABLE:
             return
         
         try:
+            base_url = get_base_url()
+            if not base_url:
+                await update.message.reply_text("❌ **Error: PUBLIC_URL tidak terkonfigurasi!**")
+                return
+            
             # Get recording status via API
-            url = f"{PUBLIC_URL}/record_status"
-            response = requests.get(url, timeout=5)
+            url = f"{base_url}/record_status"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
             result = response.json()
             
             if result.get('status') == 'RECORDING':
@@ -349,6 +401,9 @@ if TELEGRAM_AVAILABLE:
                 await update.message.reply_text("📹 Tidak ada recording yang aktif.\n\n"
                                               "Gunakan /record_start untuk mulai recording.")
                 
+        except requests.exceptions.RequestException as e:
+            print(f"Request error in record_status: {e}")
+            await update.message.reply_text(f"❌ **Error koneksi:** {str(e)}\n\nURL: `{get_base_url()}/record_status`")
         except Exception as e:
             print(f"Error in record_status: {e}")
             await update.message.reply_text(f"❌ Error: {str(e)}")
@@ -367,9 +422,15 @@ if TELEGRAM_AVAILABLE:
             
             label = context.args[0]
             
+            base_url = get_base_url()
+            if not base_url:
+                await update.message.reply_text("❌ **Error: PUBLIC_URL tidak terkonfigurasi!**")
+                return
+            
             # Export recording via API
-            url = f"{PUBLIC_URL}/record_export/{label}"
+            url = f"{base_url}/record_export/{label}"
             response = requests.get(url, timeout=10)
+            response.raise_for_status()
             result = response.json()
             
             if result.get('status') == 'SUCCESS':
@@ -401,8 +462,13 @@ if TELEGRAM_AVAILABLE:
             else:
                 await update.message.reply_text(f"❌ Error: {result.get('error', 'Unknown error')}")
                 
+        except requests.exceptions.RequestException as e:
+            print(f"Request error in record_export: {e}")
+            await update.message.reply_text(f"❌ **Error koneksi:** {str(e)}\n\nURL: `{get_base_url()}/record_export/{label if 'label' in locals() else 'N/A'}`")
         except Exception as e:
             print(f"Error in record_export: {e}")
+            import traceback
+            traceback.print_exc()
             await update.message.reply_text(f"❌ Error: {str(e)}")
 
     async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
