@@ -8,6 +8,7 @@ import threading
 import time
 import os
 import sys
+import traceback
 
 try:
     from dotenv import load_dotenv
@@ -95,11 +96,11 @@ if TELEGRAM_AVAILABLE:
 # Telegram functions (only if available)
 if TELEGRAM_AVAILABLE:
     def get_base_url():
-        """Get cleaned base URL without trailing slash or spaces"""
+        """Return PUBLIC_URL cleaned from whitespace and trailing slash."""
         if not PUBLIC_URL:
             return None
-        return PUBLIC_URL.rstrip('/').strip()
-    
+        return PUBLIC_URL.strip().rstrip('/')
+
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != AUTHORIZED_USER_ID:
             await update.message.reply_text("Maaf, Anda tidak diizinkan mengakses bot ini.")
@@ -139,68 +140,58 @@ if TELEGRAM_AVAILABLE:
                 duration_minutes = 180
                 await update.message.reply_text("⚠️ Maksimal 180 menit. Menggunakan 180 menit.")
             
-            # Parse label with flexible parsing
-            label = context.args[1]
-            label_lower = label.lower()
+            label_input = context.args[1]
+            label_lower = label_input.lower().strip()
             
-            # Valid road types and motor conditions
             valid_roads = ['jalan_lurus', 'jalan_berbatu', 'jalan_menanjak']
             valid_conditions = ['normal', 'rusak_ringan', 'rusak_berat']
             
-            # Try to find road type by matching from the beginning
             road_type = None
             motor_condition = None
             
+            # Try direct prefix match first
             for road in valid_roads:
-                if label_lower.startswith(road.lower()):
+                if label_lower.startswith(road):
                     road_type = road
-                    # Get the rest after road type + underscore
                     remaining = label_lower[len(road):].lstrip('_')
-                    if remaining:
-                        motor_condition = remaining
+                    motor_condition = remaining if remaining else None
                     break
             
-            # If no road type found, try to extract from parts (more flexible)
+            # Fallback to splitting by underscore
             if not road_type:
                 label_parts = label_lower.split('_')
                 if len(label_parts) >= 2:
-                    # Try to match road type from first two parts
                     possible_road = f"{label_parts[0]}_{label_parts[1]}"
                     if possible_road in valid_roads:
                         road_type = possible_road
                         motor_condition = '_'.join(label_parts[2:]) if len(label_parts) > 2 else None
                     else:
-                        # Fallback: use first part as road type (for backward compatibility)
                         road_type = label_parts[0]
-                        motor_condition = '_'.join(label_parts[1:])
-                else:
-                    road_type = label_parts[0] if label_parts else None
-                    motor_condition = None
+                        motor_condition = '_'.join(label_parts[1:]) if len(label_parts) > 1 else None
+                elif label_parts:
+                    road_type = label_parts[0]
             
-            # Validate road type (more lenient - allow partial matches)
             if road_type:
-                # Check if road_type matches any valid road (case insensitive, allow partial)
-                road_type_matched = None
+                matched_road = None
                 for valid_road in valid_roads:
                     if valid_road.lower() == road_type.lower() or road_type.lower() in valid_road.lower():
-                        road_type_matched = valid_road
+                        matched_road = valid_road
                         break
                 
-                if not road_type_matched:
-                    # Try to find closest match
+                if not matched_road:
                     if 'lurus' in road_type.lower():
-                        road_type_matched = 'jalan_lurus'
+                        matched_road = 'jalan_lurus'
                     elif 'berbatu' in road_type.lower():
-                        road_type_matched = 'jalan_berbatu'
+                        matched_road = 'jalan_berbatu'
                     elif 'menanjak' in road_type.lower():
-                        road_type_matched = 'jalan_menanjak'
+                        matched_road = 'jalan_menanjak'
                 
-                if road_type_matched:
-                    road_type = road_type_matched
+                if matched_road:
+                    road_type = matched_road
                 else:
                     await update.message.reply_text(f"❌ **Road type tidak valid!**\n\n"
                                                   f"Pilih dari: {', '.join(valid_roads)}\n\n"
-                                                  f"Input yang diterima: `{label}`")
+                                                  f"Input yang diterima: `{label_input}`")
                     return
             else:
                 await update.message.reply_text(f"❌ **Label tidak valid!**\n\n"
@@ -208,40 +199,34 @@ if TELEGRAM_AVAILABLE:
                                               f"Contoh: `/record_start 30 jalan_lurus_normal`")
                 return
             
-            # Validate motor condition (more lenient - allow partial matches and test variations)
             if motor_condition:
-                motor_condition_matched = None
+                original_motor_condition = motor_condition
+                motor_condition_match = None
                 motor_condition_lower = motor_condition.lower()
                 
-                # Check exact match first
                 for valid_cond in valid_conditions:
                     if valid_cond.lower() == motor_condition_lower:
-                        motor_condition_matched = valid_cond
+                        motor_condition_match = valid_cond
                         break
                 
-                # If no exact match, try partial match
-                if not motor_condition_matched:
+                if not motor_condition_match:
                     if 'normal' in motor_condition_lower or 'test' in motor_condition_lower:
-                        motor_condition_matched = 'normal'
+                        motor_condition_match = 'normal'
                     elif 'ringan' in motor_condition_lower:
-                        motor_condition_matched = 'rusak_ringan'
+                        motor_condition_match = 'rusak_ringan'
                     elif 'berat' in motor_condition_lower:
-                        motor_condition_matched = 'rusak_berat'
+                        motor_condition_match = 'rusak_berat'
                 
-                if motor_condition_matched:
-                    motor_condition = motor_condition_matched
+                if motor_condition_match:
+                    motor_condition = motor_condition_match
                 else:
-                    # Default to 'normal' if unclear (lenient mode)
-                    original_input = motor_condition
                     motor_condition = 'normal'
                     await update.message.reply_text(f"⚠️ **Motor condition tidak jelas, menggunakan 'normal'**\n\n"
-                                                  f"Input: `{original_input}`\n"
+                                                  f"Input: `{original_motor_condition}`\n"
                                                   f"Valid conditions: {', '.join(valid_conditions)}")
             else:
-                # Default to 'normal' if no motor condition specified
                 motor_condition = 'normal'
             
-            # Start recording via API
             base_url = get_base_url()
             if not base_url:
                 await update.message.reply_text("❌ **Error: PUBLIC_URL tidak terkonfigurasi!**\n\n"
@@ -249,7 +234,6 @@ if TELEGRAM_AVAILABLE:
                 return
             
             url = f"{base_url}/record_start"
-            
             data = {
                 'duration_minutes': duration_minutes,
                 'label': f"{road_type}_{motor_condition}",
@@ -259,7 +243,7 @@ if TELEGRAM_AVAILABLE:
             
             try:
                 response = requests.post(url, json=data, timeout=10)
-                response.raise_for_status()  # Raise exception for bad status codes
+                response.raise_for_status()
                 result = response.json()
                 
                 if result.get('status') == 'RECORDING_STARTED':
@@ -281,7 +265,6 @@ if TELEGRAM_AVAILABLE:
                                                   f"URL: `{url}`")
             except requests.exceptions.RequestException as e:
                 error_detail = str(e)
-                # Clean up error message
                 if "Failed to resolve" in error_detail:
                     error_detail = f"Gagal resolve hostname. Cek PUBLIC_URL: `{base_url}`"
                 elif "Max retries exceeded" in error_detail:
@@ -295,15 +278,15 @@ if TELEGRAM_AVAILABLE:
                                               f"1. Server RAW recording sudah running\n"
                                               f"2. PUBLIC_URL benar di environment variables\n"
                                               f"3. Tidak ada spasi di akhir URL")
-            except ValueError as ve:
-                await update.message.reply_text("❌ **Durasi harus berupa angka!**\n\n"
-                                              "Contoh: `/record_start 30 jalan_lurus_normal`")
-            except Exception as e:
-                print(f"Error in record_start: {e}")
-                import traceback
-                traceback.print_exc()
-                await update.message.reply_text(f"❌ **Error:** {str(e)}\n\n"
-                                              f"Tipe error: {type(e).__name__}")
+        except ValueError:
+            await update.message.reply_text("❌ **Durasi harus berupa angka!**\n\n"
+                                          "Contoh: `/record_start 30 jalan_lurus_normal`")
+        except Exception as e:
+            print(f"Error in record_start: {e}")
+            import traceback
+            traceback.print_exc()
+            await update.message.reply_text(f"❌ **Error:** {str(e)}\n\n"
+                                          f"Tipe error: {type(e).__name__}")
 
     async def record_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Stop recording and show summary"""
@@ -317,7 +300,6 @@ if TELEGRAM_AVAILABLE:
                 await update.message.reply_text("❌ **Error: PUBLIC_URL tidak terkonfigurasi!**")
                 return
             
-            # Stop recording via API
             url = f"{base_url}/record_stop"
             response = requests.post(url, timeout=10)
             response.raise_for_status()
@@ -346,7 +328,6 @@ if TELEGRAM_AVAILABLE:
                 await update.message.reply_text(message)
             else:
                 await update.message.reply_text(f"❌ Error: {result.get('error', 'Unknown error')}")
-                
         except requests.exceptions.RequestException as e:
             print(f"Request error in record_stop: {e}")
             await update.message.reply_text(f"❌ **Error koneksi:** {str(e)}\n\nURL: `{get_base_url()}/record_stop`")
@@ -366,7 +347,6 @@ if TELEGRAM_AVAILABLE:
                 await update.message.reply_text("❌ **Error: PUBLIC_URL tidak terkonfigurasi!**")
                 return
             
-            # Get recording status via API
             url = f"{base_url}/record_status"
             response = requests.get(url, timeout=10)
             response.raise_for_status()
@@ -381,7 +361,6 @@ if TELEGRAM_AVAILABLE:
                 progress_percent = result.get('progress_percent', 0)
                 data_points = result.get('data_points', 0)
                 
-                # Create progress bar
                 progress_bar_length = 20
                 filled_length = int(progress_bar_length * progress_percent / 100)
                 progress_bar = "█" * filled_length + "░" * (progress_bar_length - filled_length)
@@ -400,7 +379,6 @@ if TELEGRAM_AVAILABLE:
             else:
                 await update.message.reply_text("📹 Tidak ada recording yang aktif.\n\n"
                                               "Gunakan /record_start untuk mulai recording.")
-                
         except requests.exceptions.RequestException as e:
             print(f"Request error in record_status: {e}")
             await update.message.reply_text(f"❌ **Error koneksi:** {str(e)}\n\nURL: `{get_base_url()}/record_status`")
@@ -421,13 +399,11 @@ if TELEGRAM_AVAILABLE:
                 return
             
             label = context.args[0]
-            
             base_url = get_base_url()
             if not base_url:
                 await update.message.reply_text("❌ **Error: PUBLIC_URL tidak terkonfigurasi!**")
                 return
             
-            # Export recording via API
             url = f"{base_url}/record_export/{label}"
             response = requests.get(url, timeout=10)
             response.raise_for_status()
@@ -438,10 +414,7 @@ if TELEGRAM_AVAILABLE:
                 data_points = result.get('data_points', 0)
                 csv_data = result.get('data', '')
                 
-                # Create CSV file and send
                 csv_filename = f"raw_vibration_data_{label}.csv"
-                
-                # Send as document
                 csv_bytes = csv_data.encode('utf-8')
                 csv_io = io.BytesIO(csv_bytes)
                 csv_io.name = csv_filename
@@ -461,7 +434,6 @@ if TELEGRAM_AVAILABLE:
                 csv_io.close()
             else:
                 await update.message.reply_text(f"❌ Error: {result.get('error', 'Unknown error')}")
-                
         except requests.exceptions.RequestException as e:
             print(f"Request error in record_export: {e}")
             await update.message.reply_text(f"❌ **Error koneksi:** {str(e)}\n\nURL: `{get_base_url()}/record_export/{label if 'label' in locals() else 'N/A'}`")
