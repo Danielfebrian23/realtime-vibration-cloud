@@ -724,31 +724,62 @@ def receive_raw_data():
         print(f"Y range: {min(y_data):.3f} to {max(y_data):.3f}")
         print(f"Z range: {min(z_data):.3f} to {max(z_data):.3f}")
         
+       # Define Sampling Rate (MUST match ESP32)
+       FS = 1600  # <--- LOCKED AT 1600 Hz
+       time_step_ms = 1000 / FS
+
         # Write to recording file if active
         with recording_lock:
             if recording_status['active']:
                 try:
                     with open(recording_status['file_path'], 'a') as f:
-                        for i in range(len(x_data)):
-                            csv_line = f"{timestamp},{x_data[i]},{y_data[i]},{z_data[i]},{recording_status['label']},{recording_status['road_type']},{recording_status['motor_condition']}\n"
+                        num_samples = len(x_data)
+                        
+                        for i in range(num_samples):
+                            # --- TIMESTAMP CALCULATION ---
+                            # Calculate precise time for THIS specific sample by working backwards
+                            # Sample N (last one) = arrival_timestamp
+                            # Sample 0 (first one) = arrival_timestamp - duration
+                            samples_from_end = num_samples - 1 - i
+                            time_offset = samples_from_end * time_step_ms
+                            exact_time_ms = arrival_timestamp - time_offset
+                            
+                            # Format as ISO String for readability/thesis verification
+                            dt_object = datetime.fromtimestamp(exact_time_ms / 1000.0)
+                            time_str = dt_object.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                            
+                            # --- CSV WRITING (PRESERVING ALL COLUMNS) ---
+                            # Format: timestamp, x, y, z, label, road_type, motor_condition
+                            # Note: We use 'time_str' instead of the raw 'timestamp'
+                            csv_line = f"{time_str},{x_data[i]},{y_data[i]},{z_data[i]},{recording_status['label']},{recording_status['road_type']},{recording_status['motor_condition']}\n"
                             f.write(csv_line)
+                            
                             recording_status['data_points'] += 1
-                    
+
+                    # Debug print (Optional: Keep your existing logging style)
                     print(f"Raw data written: {len(x_data)} samples to {recording_status['file_path']}")
                 except Exception as e:
                     print(f"Error writing raw data: {e}")
                 
                 # Check if recording time is up
                 current_time = int(time.time() * 1000)
-                elapsed_ms = current_time - recording_status['start_time']
-                total_ms = recording_status['duration_minutes'] * 60 * 1000
-                if elapsed_ms >= total_ms:
-                    recording_status['active'] = False
-                    print(f"Recording auto-stopped after {recording_status['duration_minutes']} minutes")
-        
+                
+                # SAFETY CHECK: Pastikan start_time ada sebelum menghitung selisih
+                if recording_status['start_time'] is not None:
+                    elapsed_ms = current_time - recording_status['start_time']
+                    total_ms = recording_status['duration_minutes'] * 60 * 1000
+                    
+                    if elapsed_ms >= total_ms:
+                        recording_status['active'] = False
+                        print(f"Recording auto-stopped after {recording_status['duration_minutes']} minutes")
+                else:
+                    # Jika start_time None tapi active True, ini aneh.
+                    # Opsional: Set start_time ke sekarang atau matikan recording.
+                    # Untuk aman, biarkan saja atau log warning.
+                    pass            
         # Prepare response
         response = {
-            'timestamp': timestamp,
+            'timestamp': arrival_timestamp,
             'samples_received': len(x_data),
             'recording_active': recording_status['active'],
             'status': 'SUCCESS'
