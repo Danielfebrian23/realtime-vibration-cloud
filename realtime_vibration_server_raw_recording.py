@@ -720,7 +720,7 @@ def receive_raw_data():
         z_data = data['z']
         
         # Debug logging
-        print(f"Received raw data: {len(x_data)} samples, timestamp: {timestamp}")
+        print(f"Received raw data: {len(x_data)} samples, timestamp: {arrival_timestamp}")
         print(f"X range: {min(x_data):.3f} to {max(x_data):.3f}")
         print(f"Y range: {min(y_data):.3f} to {max(y_data):.3f}")
         print(f"Z range: {min(z_data):.3f} to {max(z_data):.3f}")
