@@ -704,34 +704,45 @@ def export_recording(label):
 def receive_raw_data():
     """Receive raw vibration data from ESP32"""
     try:
-        # Get data from ESP32
+        # 1. Validasi Data Masuk (DIPERKUAT)
         data = request.get_json()
-        if not data or 'x' not in data or 'y' not in data or 'z' not in data:
-            return jsonify({
-                'error': 'Invalid data format',
-                'status': 'ERROR'
-            }), 400
+        if not data:
+            return jsonify({'error': 'No JSON received', 'status': 'ERROR'}), 400
+            
+        # Cek kelengkapan key (FITUR TAMBAHAN)
+        if 'x' not in data or 'y' not in data or 'z' not in data:
+            print("Error: JSON missing x, y, z keys")
+            return jsonify({'error': 'Invalid keys', 'status': 'ERROR'}), 400
         
         # Extract vibration data
         x_data = data['x']
         y_data = data['y']
         z_data = data['z']
-        timestamp = data.get('timestamp', int(time.time() * 1000))
         
         # Debug logging
         print(f"Received raw data: {len(x_data)} samples, timestamp: {timestamp}")
         print(f"X range: {min(x_data):.3f} to {max(x_data):.3f}")
         print(f"Y range: {min(y_data):.3f} to {max(y_data):.3f}")
         print(f"Z range: {min(z_data):.3f} to {max(z_data):.3f}")
+
+        # Define Arrival Timestamp (Gunakan waktu server agar akurat tanggalnya)
+        # Kita pakai waktu server saat ini sebagai titik akhir batch data
+        arrival_timestamp = data.get('timestamp', int(time.time() * 1000))
         
         # Define Sampling Rate (MUST match ESP32)
         FS = 1600  # <--- LOCKED AT 1600 Hz
         time_step_ms = 1000 / FS
+        # -------------------------------------------
 
         # Write to recording file if active
         with recording_lock:
             if recording_status['active']:
                 try:
+                    # Validasi File Path (FITUR TAMBAHAN - Mencegah Crash)
+                    if not recording_status['file_path']:
+                        print("Error: File path is empty! Cannot write data.")
+                        return jsonify({'status': 'ERROR', 'msg': 'No file path set'}), 500
+                        
                     with open(recording_status['file_path'], 'a') as f:
                         num_samples = len(x_data)
                         
@@ -747,6 +758,11 @@ def receive_raw_data():
                             # Format as ISO String for readability/thesis verification
                             dt_object = datetime.fromtimestamp(exact_time_ms / 1000.0)
                             time_str = dt_object.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+
+                            # Casting Float (FITUR TAMBAHAN - Data Safety)
+                            val_x = float(x_data[i])
+                            val_y = float(y_data[i])
+                            val_z = float(z_data[i])
                             
                             # --- CSV WRITING (PRESERVING ALL COLUMNS) ---
                             # Format: timestamp, x, y, z, label, road_type, motor_condition
@@ -759,7 +775,8 @@ def receive_raw_data():
                     # Debug print (Optional: Keep your existing logging style)
                     print(f"Raw data written: {len(x_data)} samples to {recording_status['file_path']}")
                 except Exception as e:
-                    print(f"Error writing raw data: {e}")
+                    print(f"CRITICAL WRITE ERROR: {e}")
+                    traceback.print_exc() # Cetak error lengkap di log Railway
                 
                 # Check if recording time is up
                 current_time = int(time.time() * 1000)
