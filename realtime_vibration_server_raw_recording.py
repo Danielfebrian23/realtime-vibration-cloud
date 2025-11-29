@@ -724,9 +724,9 @@ def receive_raw_data():
         print(f"Y range: {min(y_data):.3f} to {max(y_data):.3f}")
         print(f"Z range: {min(z_data):.3f} to {max(z_data):.3f}")
         
-       # Define Sampling Rate (MUST match ESP32)
-       FS = 1600  # <--- LOCKED AT 1600 Hz
-       time_step_ms = 1000 / FS
+        # Define Sampling Rate (MUST match ESP32)
+        FS = 1600  # <--- LOCKED AT 1600 Hz
+        time_step_ms = 1000 / FS
 
         # Write to recording file if active
         with recording_lock:
