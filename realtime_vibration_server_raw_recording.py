@@ -703,6 +703,12 @@ def export_recording(label):
 @app.route('/raw_data', methods=['POST'])
 def receive_raw_data():
     """Receive raw vibration data from ESP32"""
+
+    # --- SAFETY NET: Definisi Awal ---
+    # Kita set nilai default dulu supaya variabel ini PASTI ADA
+    # Apapun yang terjadi nanti, variabel ini tidak akan null/undefined
+    arrival_timestamp = int(time.time() * 1000)
+    
     try:
         # 1. Validasi Data Masuk (DIPERKUAT)
         data = request.get_json()
@@ -713,6 +719,10 @@ def receive_raw_data():
         if 'x' not in data or 'y' not in data or 'z' not in data:
             print("Error: JSON missing x, y, z keys")
             return jsonify({'error': 'Invalid keys', 'status': 'ERROR'}), 400
+
+        # 2. Update Timestamp dari Data (Jika ada)
+        # Ini menimpa nilai default di atas dengan data aktual dari ESP32
+        arrival_timestamp = data.get('timestamp', arrival_timestamp)
         
         # Extract vibration data
         x_data = data['x']
@@ -725,10 +735,6 @@ def receive_raw_data():
         print(f"Y range: {min(y_data):.3f} to {max(y_data):.3f}")
         print(f"Z range: {min(z_data):.3f} to {max(z_data):.3f}")
 
-        # Define Arrival Timestamp (Gunakan waktu server agar akurat tanggalnya)
-        # Kita pakai waktu server saat ini sebagai titik akhir batch data
-        arrival_timestamp = data.get('timestamp', int(time.time() * 1000))
-        
         # Define Sampling Rate (MUST match ESP32)
         FS = 1600  # <--- LOCKED AT 1600 Hz
         time_step_ms = 1000 / FS
@@ -814,10 +820,8 @@ def receive_raw_data():
         
     except Exception as e:
         print(f"Error in raw data endpoint: {e}")
-        return jsonify({
-            'error': str(e),
-            'status': 'ERROR'
-        }), 500
+        traceback.print_exc()
+        return jsonify({'error': str(e), 'status': 'ERROR'}), 500
 
 @app.route('/status', methods=['GET'])
 def get_status():
