@@ -719,10 +719,6 @@ def receive_raw_data():
         if 'x' not in data or 'y' not in data or 'z' not in data:
             print("Error: JSON missing x, y, z keys")
             return jsonify({'error': 'Invalid keys', 'status': 'ERROR'}), 400
-
-        # 2. Update Timestamp dari Data (Jika ada)
-        # Ini menimpa nilai default di atas dengan data aktual dari ESP32
-        arrival_timestamp = data.get('timestamp', arrival_timestamp)
         
         # Extract vibration data
         x_data = data['x']
