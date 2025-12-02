@@ -9,6 +9,7 @@ import time
 import os
 import sys
 import traceback
+import re
 
 try:
     from dotenv import load_dotenv
@@ -39,7 +40,8 @@ recording_status = {
     'data_points': 0,
     'file_path': '',
     'road_type': '',
-    'motor_condition': ''
+    'motor_condition': '',
+    'gear_or_test': ''  # Bisa berupa: gigi1, gigi2, gigi3, gigi4, atau tes1, tes2, tes3, dll
 }
 
 recording_data = []
@@ -106,15 +108,25 @@ if TELEGRAM_AVAILABLE:
             await update.message.reply_text("Maaf, Anda tidak diizinkan mengakses bot ini.")
             return
         
-        await update.message.reply_text("✅ **RAW DATA RECORDING SERVER**\n\n"
+                await update.message.reply_text("✅ **RAW DATA RECORDING SERVER**\n\n"
                                       "Server siap untuk recording data raw dari ESP32.\n"
                                       "Gunakan /record_start untuk mulai recording.\n\n"
                                       "**Format command:**\n"
-                                      "`/record_start <durasi_menit> <road_type>_<motor_condition>`\n\n"
-                                      "**Contoh:**\n"
-                                      "• `/record_start 30 jalan_lurus_normal`\n"
-                                      "• `/record_start 45 jalan_berbatu_rusak_ringan`\n"
-                                      "• `/record_start 60 jalan_menanjak_rusak_berat`")
+                                      "`/record_start <durasi_menit> <label>`\n\n"
+                                      "**Format label:**\n"
+                                      "`<road_type>_<motor_condition>_[gigi|tes]`\n\n"
+                                      "**Contoh dengan gigi:**\n"
+                                      "• `/record_start 30 jalan_mulus_normal_gigi1`\n"
+                                      "• `/record_start 45 jalan_berbatu_rusak_ringan_gigi2`\n"
+                                      "• `/record_start 60 jalan_menanjak_rusak_berat_gigi4`\n"
+                                      "• `/record_start 30 jalan_menurun_normal_gigi1`\n\n"
+                                      "**Contoh dengan test:**\n"
+                                      "• `/record_start 30 jalan_mulus_tes1`\n"
+                                      "• `/record_start 45 jalan_berbatu_tes2`\n"
+                                      "• `/record_start 30 jalan_menurun_tes1`\n\n"
+                                      "**Contoh tanpa gigi/test:**\n"
+                                      "• `/record_start 30 jalan_mulus_normal`\n"
+                                      "• `/record_start 30 jalan_menurun_normal`")
 
     async def record_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start recording raw vibration data"""
@@ -126,13 +138,19 @@ if TELEGRAM_AVAILABLE:
             # Parse arguments
             if not context.args or len(context.args) < 2:
                 await update.message.reply_text("❌ **Format salah!**\n\n"
-                                              "**Format:** `/record_start <durasi_menit> <road_type>_<motor_condition>`\n\n"
-                                              "**Contoh:**\n"
-                                              "• `/record_start 30 jalan_lurus_normal`\n"
-                                              "• `/record_start 45 jalan_berbatu_rusak_ringan`\n"
-                                              "• `/record_start 60 jalan_menanjak_rusak_berat`\n\n"
-                                              "**Road types:** jalan_lurus, jalan_berbatu, jalan_menanjak\n"
-                                              "**Motor conditions:** normal, rusak_ringan, rusak_berat")
+                                              "**Format:** `/record_start <durasi_menit> <label>`\n\n"
+                                              "**Format label:**\n"
+                                              "`<road_type>_<motor_condition>_[gigi|tes]`\n\n"
+                                              "**Contoh dengan gigi:**\n"
+                                              "• `/record_start 30 jalan_mulus_normal_gigi1`\n"
+                                              "• `/record_start 45 jalan_berbatu_rusak_ringan_gigi2`\n\n"
+                                              "**Contoh dengan test:**\n"
+                                              "• `/record_start 30 jalan_mulus_tes1`\n"
+                                              "• `/record_start 45 jalan_berbatu_tes2`\n\n"
+                                              "**Road types:** jalan_mulus, jalan_berbatu, jalan_menanjak, jalan_menurun\n"
+                                              "**Motor conditions:** normal, rusak_ringan, rusak_berat\n"
+                                              "**Gear:** gigi1, gigi2, gigi3, gigi4\n"
+                                              "**Test:** tes1, tes2, tes3, ... (fleksibel)")
                 return
             
             duration_minutes = int(context.args[0])
@@ -143,88 +161,103 @@ if TELEGRAM_AVAILABLE:
             label_input = context.args[1]
             label_lower = label_input.lower().strip()
             
-            valid_roads = ['jalan_lurus', 'jalan_berbatu', 'jalan_menanjak']
+            # Secara internal kita pakai nama standar 'jalan_mulus' (bukan 'jalan_lurus')
+            # tetapi parser tetap menerima input lama 'jalan_lurus' dan memetakan ke 'jalan_mulus'
+            valid_roads = ['jalan_mulus', 'jalan_berbatu', 'jalan_menanjak', 'jalan_menurun']
             valid_conditions = ['normal', 'rusak_ringan', 'rusak_berat']
             
             road_type = None
             motor_condition = None
+            gear_or_test = ''
             
-            # Try direct prefix match first
+            # Split label menjadi parts
+            label_parts = label_lower.split('_')
+            
+            # 1. Identifikasi road_type (harus di awal)
             for road in valid_roads:
                 if label_lower.startswith(road):
                     road_type = road
-                    remaining = label_lower[len(road):].lstrip('_')
-                    motor_condition = remaining if remaining else None
+                    # Hapus road_type dari label_parts
+                    road_parts = road.split('_')
+                    label_parts = label_parts[len(road_parts):]
                     break
             
-            # Fallback to splitting by underscore
-            if not road_type:
-                label_parts = label_lower.split('_')
-                if len(label_parts) >= 2:
-                    possible_road = f"{label_parts[0]}_{label_parts[1]}"
-                    if possible_road in valid_roads:
-                        road_type = possible_road
-                        motor_condition = '_'.join(label_parts[2:]) if len(label_parts) > 2 else None
-                    else:
-                        road_type = label_parts[0]
-                        motor_condition = '_'.join(label_parts[1:]) if len(label_parts) > 1 else None
-                elif label_parts:
-                    road_type = label_parts[0]
+            # Fallback: coba cari road_type di parts
+            if not road_type and len(label_parts) >= 2:
+                possible_road = f"{label_parts[0]}_{label_parts[1]}"
+                if possible_road in valid_roads:
+                    road_type = possible_road
+                    label_parts = label_parts[2:]
             
+            # Validasi road_type
             if road_type:
-                matched_road = None
-                for valid_road in valid_roads:
-                    if valid_road.lower() == road_type.lower() or road_type.lower() in valid_road.lower():
-                        matched_road = valid_road
-                        break
-                
-                if not matched_road:
-                    if 'lurus' in road_type.lower():
-                        matched_road = 'jalan_lurus'
-                    elif 'berbatu' in road_type.lower():
-                        matched_road = 'jalan_berbatu'
-                    elif 'menanjak' in road_type.lower():
-                        matched_road = 'jalan_menanjak'
-                
-                if matched_road:
-                    road_type = matched_road
-                else:
-                    await update.message.reply_text(f"❌ **Road type tidak valid!**\n\n"
-                                                  f"Pilih dari: {', '.join(valid_roads)}\n\n"
-                                                  f"Input yang diterima: `{label_input}`")
-                    return
+                # Normalisasi road_type
+                if 'lurus' in road_type.lower() or 'mulus' in road_type.lower():
+                    # Input lama 'jalan_lurus_*' dan baru 'jalan_mulus_*' sama‑sama dianggap 'jalan_mulus'
+                    road_type = 'jalan_mulus'
+                elif 'berbatu' in road_type.lower():
+                    road_type = 'jalan_berbatu'
+                elif 'menanjak' in road_type.lower():
+                    road_type = 'jalan_menanjak'
+                elif 'menurun' in road_type.lower():
+                    road_type = 'jalan_menurun'
+                elif road_type not in valid_roads:
+                    # Coba match partial
+                    for valid_road in valid_roads:
+                        if valid_road.lower() in road_type.lower() or road_type.lower() in valid_road.lower():
+                            road_type = valid_road
+                            break
+                    if road_type not in valid_roads:
+                        await update.message.reply_text(f"❌ **Road type tidak valid!**\n\n"
+                                                      f"Pilih dari: {', '.join(valid_roads)}\n\n"
+                                                      f"Input yang diterima: `{label_input}`")
+                        return
             else:
-                await update.message.reply_text(f"❌ **Label tidak valid!**\n\n"
-                                              f"Format: `/record_start <durasi> <road_type>_<motor_condition>`\n\n"
-                                              f"Contoh: `/record_start 30 jalan_lurus_normal`")
+                await update.message.reply_text(f"❌ **Road type tidak ditemukan!**\n\n"
+                                              f"Format: `/record_start <durasi> <label>`\n\n"
+                                              f"Label harus dimulai dengan: {', '.join(valid_roads)}\n"
+                                              f"Contoh: `/record_start 30 jalan_mulus_normal_gigi1`")
                 return
             
-            if motor_condition:
-                original_motor_condition = motor_condition
-                motor_condition_match = None
-                motor_condition_lower = motor_condition.lower()
+            # 2. Identifikasi gear_or_test di akhir (bisa gigi1-4 atau tesN)
+            if label_parts:
+                last_part = label_parts[-1].lower()
                 
+                # Check untuk gigi (gigi1, gigi2, gigi3, gigi4)
+                if re.match(r'^gigi[1-4]$', last_part):
+                    gear_or_test = last_part  # gigi1, gigi2, gigi3, atau gigi4
+                    label_parts = label_parts[:-1]  # Hapus dari parts
+                # Check untuk tes (tes1, tes2, tes3, dll - fleksibel)
+                elif re.match(r'^tes\d+$', last_part):
+                    gear_or_test = last_part  # tes1, tes2, tes3, dll
+                    label_parts = label_parts[:-1]  # Hapus dari parts
+            
+            # 3. Identifikasi motor_condition dari sisa parts
+            if label_parts:
+                remaining = '_'.join(label_parts)
+                motor_condition_lower = remaining.lower()
+                
+                # Exact match
                 for valid_cond in valid_conditions:
                     if valid_cond.lower() == motor_condition_lower:
-                        motor_condition_match = valid_cond
+                        motor_condition = valid_cond
                         break
                 
-                if not motor_condition_match:
-                    if 'normal' in motor_condition_lower or 'test' in motor_condition_lower:
-                        motor_condition_match = 'normal'
+                # Partial match jika belum ketemu
+                if not motor_condition:
+                    if 'normal' in motor_condition_lower or 'tes' in motor_condition_lower:
+                        motor_condition = 'normal'
                     elif 'ringan' in motor_condition_lower:
-                        motor_condition_match = 'rusak_ringan'
+                        motor_condition = 'rusak_ringan'
                     elif 'berat' in motor_condition_lower:
-                        motor_condition_match = 'rusak_berat'
-                
-                if motor_condition_match:
-                    motor_condition = motor_condition_match
-                else:
-                    motor_condition = 'normal'
-                    await update.message.reply_text(f"⚠️ **Motor condition tidak jelas, menggunakan 'normal'**\n\n"
-                                                  f"Input: `{original_motor_condition}`\n"
-                                                  f"Valid conditions: {', '.join(valid_conditions)}")
+                        motor_condition = 'rusak_berat'
+                    else:
+                        motor_condition = 'normal'
+                        await update.message.reply_text(f"⚠️ **Motor condition tidak jelas, menggunakan 'normal'**\n\n"
+                                                      f"Input: `{remaining}`\n"
+                                                      f"Valid conditions: {', '.join(valid_conditions)}")
             else:
+                # Default jika tidak ada motor_condition
                 motor_condition = 'normal'
             
             base_url = get_base_url()
@@ -233,12 +266,19 @@ if TELEGRAM_AVAILABLE:
                                               "Pastikan environment variable RAW_PUBLIC_URL atau PUBLIC_URL sudah di-set di Railway.")
                 return
             
+            # Buat label lengkap
+            if gear_or_test:
+                full_label = f"{road_type}_{motor_condition}_{gear_or_test}"
+            else:
+                full_label = f"{road_type}_{motor_condition}"
+            
             url = f"{base_url}/record_start"
             data = {
                 'duration_minutes': duration_minutes,
-                'label': f"{road_type}_{motor_condition}",
+                'label': full_label,
                 'road_type': road_type,
-                'motor_condition': motor_condition
+                'motor_condition': motor_condition,
+                'gear_or_test': gear_or_test
             }
             
             try:
@@ -248,9 +288,14 @@ if TELEGRAM_AVAILABLE:
                 
                 if result.get('status') == 'RECORDING_STARTED':
                     message = f"🎬 **RAW DATA RECORDING STARTED**\n\n"
-                    message += f"📝 **Label**: {road_type}_{motor_condition}\n"
+                    message += f"📝 **Label**: {full_label}\n"
                     message += f"🛣️ **Road Type**: {road_type}\n"
                     message += f"🏍️ **Motor Condition**: {motor_condition}\n"
+                    if gear_or_test:
+                        if gear_or_test.startswith('gigi'):
+                            message += f"⚙️ **Gear**: {gear_or_test}\n"
+                        else:
+                            message += f"🧪 **Test**: {gear_or_test}\n"
                     message += f"⏱️ **Duration**: {duration_minutes} menit\n"
                     message += f"📁 **File**: {result.get('filename', 'N/A')}\n\n"
                     message += f"📊 Data RAW akan disimpan otomatis ke CSV\n"
@@ -280,7 +325,7 @@ if TELEGRAM_AVAILABLE:
                                               f"3. Tidak ada spasi di akhir URL")
         except ValueError:
             await update.message.reply_text("❌ **Durasi harus berupa angka!**\n\n"
-                                          "Contoh: `/record_start 30 jalan_lurus_normal`")
+                                          "Contoh: `/record_start 30 jalan_mulus_normal`")
         except Exception as e:
             print(f"Error in record_start: {e}")
             import traceback
@@ -314,11 +359,17 @@ if TELEGRAM_AVAILABLE:
                 motor_condition = result.get('motor_condition', 'N/A')
                 
                 duration_minutes = duration_seconds / 60
+                gear_or_test = result.get('gear_or_test', '')
                 
                 message = f"⏹️ **RAW DATA RECORDING STOPPED**\n\n"
                 message += f"📝 **Label**: {label}\n"
                 message += f"🛣️ **Road Type**: {road_type}\n"
                 message += f"🏍️ **Motor Condition**: {motor_condition}\n"
+                if gear_or_test:
+                    if gear_or_test.startswith('gigi'):
+                        message += f"⚙️ **Gear**: {gear_or_test}\n"
+                    else:
+                        message += f"🧪 **Test**: {gear_or_test}\n"
                 message += f"⏱️ **Duration**: {duration_minutes:.1f} menit\n"
                 message += f"📊 **Data Points**: {data_points:,}\n"
                 message += f"📁 **File**: {filename}\n\n"
@@ -364,11 +415,17 @@ if TELEGRAM_AVAILABLE:
                 progress_bar_length = 20
                 filled_length = int(progress_bar_length * progress_percent / 100)
                 progress_bar = "█" * filled_length + "░" * (progress_bar_length - filled_length)
+                gear_or_test = result.get('gear_or_test', '')
                 
                 message = f"🎬 **RAW DATA RECORDING STATUS**\n\n"
                 message += f"📝 **Label**: {label}\n"
                 message += f"🛣️ **Road Type**: {road_type}\n"
                 message += f"🏍️ **Motor Condition**: {motor_condition}\n"
+                if gear_or_test:
+                    if gear_or_test.startswith('gigi'):
+                        message += f"⚙️ **Gear**: {gear_or_test}\n"
+                    else:
+                        message += f"🧪 **Test**: {gear_or_test}\n"
                 message += f"⏱️ **Progress**: {elapsed_minutes:.1f} / {duration_minutes} menit\n"
                 message += f"📊 **Data Points**: {data_points:,}\n\n"
                 message += f"📈 **Progress Bar**:\n"
@@ -395,7 +452,7 @@ if TELEGRAM_AVAILABLE:
         try:
             if not context.args:
                 await update.message.reply_text("❌ Format: /record_export <label>\n\n"
-                                              "Contoh: /record_export jalan_lurus_normal")
+                                              "Contoh: /record_export jalan_mulus_normal")
                 return
             
             label = context.args[0]
@@ -458,19 +515,34 @@ if TELEGRAM_AVAILABLE:
         message += "• `/record_status` - Cek status recording\n"
         message += "• `/record_export <label>` - Download data CSV\n\n"
         message += "**Recording Format:**\n"
-        message += "`/record_start <durasi_menit> <road_type>_<motor_condition>`\n\n"
+        message += "`/record_start <durasi_menit> <label>`\n"
+        message += "`Label: <road_type>_<motor_condition>_[gigi|tes]`\n\n"
         message += "**Road Types:**\n"
-        message += "• `jalan_lurus` - Jalan lurus/datar\n"
+        message += "• `jalan_mulus` - Jalan halus/mulus/datar\n"
         message += "• `jalan_berbatu` - Jalan berbatu/bergelombang\n"
-        message += "• `jalan_menanjak` - Jalan menanjak\n\n"
+        message += "• `jalan_menanjak` - Jalan menanjak\n"
+        message += "• `jalan_menurun` - Jalan menurun/turun\n\n"
         message += "**Motor Conditions:**\n"
         message += "• `normal` - Motor dalam kondisi normal\n"
         message += "• `rusak_ringan` - Motor rusak ringan (aus)\n"
         message += "• `rusak_berat` - Motor rusak berat (rantai patah)\n\n"
-        message += "**Examples:**\n"
-        message += "• `/record_start 30 jalan_lurus_normal`\n"
+        message += "**Gear (Opsional):**\n"
+        message += "• `gigi1`, `gigi2`, `gigi3`, `gigi4`\n\n"
+        message += "**Test Number (Opsional, Fleksibel):**\n"
+        message += "• `tes1`, `tes2`, `tes3`, ... (nomor bebas)\n\n"
+        message += "**Examples dengan Gigi:**\n"
+        message += "• `/record_start 30 jalan_mulus_normal_gigi1`\n"
+        message += "• `/record_start 45 jalan_berbatu_rusak_ringan_gigi2`\n"
+        message += "• `/record_start 60 jalan_menanjak_rusak_berat_gigi4`\n"
+        message += "• `/record_start 30 jalan_menurun_normal_gigi1`\n\n"
+        message += "**Examples dengan Test:**\n"
+        message += "• `/record_start 30 jalan_mulus_tes1`\n"
+        message += "• `/record_start 45 jalan_berbatu_tes2`\n"
+        message += "• `/record_start 30 jalan_menurun_tes1`\n\n"
+        message += "**Examples tanpa Gigi/Test:**\n"
+        message += "• `/record_start 30 jalan_mulus_normal`\n"
         message += "• `/record_start 45 jalan_berbatu_rusak_ringan`\n"
-        message += "• `/record_start 60 jalan_menanjak_rusak_berat`"
+        message += "• `/record_start 30 jalan_menurun_normal`"
         
         await update.message.reply_text(message)
 
@@ -538,6 +610,7 @@ def start_recording():
         label = data.get('label', 'recording')
         road_type = data.get('road_type', 'unknown')
         motor_condition = data.get('motor_condition', 'unknown')
+        gear_or_test = data.get('gear_or_test', '')
         
         with recording_lock:
             if recording_status['active']:
@@ -553,6 +626,7 @@ def start_recording():
             recording_status['label'] = label
             recording_status['road_type'] = road_type
             recording_status['motor_condition'] = motor_condition
+            recording_status['gear_or_test'] = gear_or_test
             recording_status['data_points'] = 0
             
             # Create filename
@@ -563,8 +637,8 @@ def start_recording():
             # Clear previous data
             recording_data.clear()
             
-            # Create CSV header
-            csv_header = "timestamp,x,y,z,label,road_type,motor_condition\n"
+            # Create CSV header (dengan kolom gear_or_test)
+            csv_header = "timestamp,x,y,z,label,road_type,motor_condition,gear_or_test\n"
             with open(filename, 'w') as f:
                 f.write(csv_header)
         
@@ -574,6 +648,7 @@ def start_recording():
             'label': label,
             'road_type': road_type,
             'motor_condition': motor_condition,
+            'gear_or_test': gear_or_test,
             'filename': filename
         })
         
@@ -609,7 +684,8 @@ def stop_recording():
                 'filename': recording_status['file_path'],
                 'label': recording_status['label'],
                 'road_type': recording_status['road_type'],
-                'motor_condition': recording_status['motor_condition']
+                'motor_condition': recording_status['motor_condition'],
+                'gear_or_test': recording_status.get('gear_or_test', '')
             }
             
             # Reset recording status
@@ -621,7 +697,8 @@ def stop_recording():
                 'data_points': 0,
                 'file_path': '',
                 'road_type': '',
-                'motor_condition': ''
+                'motor_condition': '',
+                'gear_or_test': ''
             }
         
         return jsonify(result)
@@ -654,6 +731,7 @@ def get_recording_status():
                 'label': recording_status['label'],
                 'road_type': recording_status['road_type'],
                 'motor_condition': recording_status['motor_condition'],
+                'gear_or_test': recording_status.get('gear_or_test', ''),
                 'duration_minutes': recording_status['duration_minutes'],
                 'elapsed_minutes': round(elapsed_minutes, 1),
                 'progress_percent': round(progress_percent, 1),
@@ -767,9 +845,10 @@ def receive_raw_data():
                             val_z = float(z_data[i])
                             
                             # --- CSV WRITING (PRESERVING ALL COLUMNS) ---
-                            # Format: timestamp, x, y, z, label, road_type, motor_condition
+                            # Format: timestamp, x, y, z, label, road_type, motor_condition, gear_or_test
                             # Note: We use 'time_str' instead of the raw 'timestamp'
-                            csv_line = f"{time_str},{x_data[i]},{y_data[i]},{z_data[i]},{recording_status['label']},{recording_status['road_type']},{recording_status['motor_condition']}\n"
+                            gear_or_test_value = recording_status.get('gear_or_test', '')
+                            csv_line = f"{time_str},{x_data[i]},{y_data[i]},{z_data[i]},{recording_status['label']},{recording_status['road_type']},{recording_status['motor_condition']},{gear_or_test_value}\n"
                             f.write(csv_line)
                             
                             recording_status['data_points'] += 1
