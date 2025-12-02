@@ -108,7 +108,7 @@ if TELEGRAM_AVAILABLE:
             await update.message.reply_text("Maaf, Anda tidak diizinkan mengakses bot ini.")
             return
         
-                await update.message.reply_text("✅ **RAW DATA RECORDING SERVER**\n\n"
+        await update.message.reply_text("✅ **RAW DATA RECORDING SERVER**\n\n"
                                       "Server siap untuk recording data raw dari ESP32.\n"
                                       "Gunakan /record_start untuk mulai recording.\n\n"
                                       "**Format command:**\n"
