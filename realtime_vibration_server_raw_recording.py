@@ -109,7 +109,6 @@ if TELEGRAM_AVAILABLE:
             return
             
         await update.message.reply_text("✅ **RAW DATA RECORDING SERVER**\n\n"
-                                      f"{emoji} **Status Baterai Alat**: {lvl:.1f}%\n"  
                                       "Server siap untuk recording data raw dari ESP32.\n"
                                       "Gunakan /record_start untuk mulai recording.\n\n"
                                       "**Format command:**\n"
