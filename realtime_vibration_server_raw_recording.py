@@ -41,8 +41,7 @@ recording_status = {
     'file_path': '',
     'road_type': '',
     'motor_condition': '',
-    'gear_or_test': '',
-    'battery_level': 0  
+    'gear_or_test': ''
 }
 
 recording_data = []
@@ -109,11 +108,6 @@ if TELEGRAM_AVAILABLE:
             await update.message.reply_text("Maaf, Anda tidak diizinkan mengakses bot ini.")
             return
             
-      # --- TAMBAHKAN LOGIKA BATERAI DI SINI ---
-        lvl = recording_status.get('battery_level', 0)
-        emoji = "🪫" if lvl < 20 else "🔋"
-      # ---------------------------------------   
-        
         await update.message.reply_text("✅ **RAW DATA RECORDING SERVER**\n\n"
                                       f"{emoji} **Status Baterai Alat**: {lvl:.1f}%\n"  
                                       "Server siap untuk recording data raw dari ESP32.\n"
@@ -434,7 +428,6 @@ if TELEGRAM_AVAILABLE:
                     else:
                         message += f"🧪 **Test**: {gear_or_test}\n"
                 message += f"⏱️ **Progress**: {elapsed_minutes:.1f} / {duration_minutes} menit\n"
-                message += f"🔋 **Baterai Alat**: {recording_status['battery_level']:.1f}%\n"
                 message += f"📊 **Data Points**: {data_points:,}\n\n"
                 message += f"📈 **Progress Bar**:\n"
                 message += f"`{progress_bar}` {progress_percent:.1f}%\n\n"
@@ -800,11 +793,7 @@ def receive_raw_data():
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No JSON received', 'status': 'ERROR'}), 400
-
-        # --- TAMBAHKAN KODE INI ---
-        if 'vbat' in data:
-            recording_status['battery_level'] = data['vbat']
-         
+            
         # Cek kelengkapan key (FITUR TAMBAHAN)
         if 'x' not in data or 'y' not in data or 'z' not in data:
             print("Error: JSON missing x, y, z keys")
