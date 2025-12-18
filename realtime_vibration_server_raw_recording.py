@@ -41,7 +41,7 @@ recording_status = {
     'file_path': '',
     'road_type': '',
     'motor_condition': '',
-    'gear_or_test': ''
+    'gear_or_test': '',
     'battery_level': 0  
 }
 
@@ -108,8 +108,14 @@ if TELEGRAM_AVAILABLE:
         if update.effective_user.id != AUTHORIZED_USER_ID:
             await update.message.reply_text("Maaf, Anda tidak diizinkan mengakses bot ini.")
             return
+            
+      # --- TAMBAHKAN LOGIKA BATERAI DI SINI ---
+        lvl = recording_status.get('battery_level', 0)
+        emoji = "🪫" if lvl < 20 else "🔋"
+      # ---------------------------------------   
         
         await update.message.reply_text("✅ **RAW DATA RECORDING SERVER**\n\n"
+                                      f"{emoji} **Status Baterai Alat**: {lvl:.1f}%\n"  
                                       "Server siap untuk recording data raw dari ESP32.\n"
                                       "Gunakan /record_start untuk mulai recording.\n\n"
                                       "**Format command:**\n"
