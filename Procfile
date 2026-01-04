@@ -1,1 +1,1 @@
-web: python realtime_vibration_server_telegram_fixed.py 
+web: python realtime_vibration_server_random_forest_implementasi.py 
