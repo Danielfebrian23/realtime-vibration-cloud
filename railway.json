@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "realtime_vibration_server_random_forest_implementasi.py",
+    "startCommand": "server.py",
     "healthcheckPath": "/status",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
@@ -12,3 +12,4 @@
   }
 
 } 
+
