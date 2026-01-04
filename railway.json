@@ -4,10 +4,11 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "python realtime_vibration_server_telegram_fixed.py",
+    "startCommand": "realtime_vibration_server_random_forest_implementasi.py",
     "healthcheckPath": "/status",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
+
 } 
