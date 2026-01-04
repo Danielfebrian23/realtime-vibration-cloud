@@ -30,6 +30,16 @@ if not os.path.exists(RECORDING_DIR):
 
 app = Flask(__name__)
 
+# --- TAMBAHAN UNTUK HEALTHCHECK RAILWAY ---
+@app.route('/', methods=['GET'])
+def index():
+    return "Server is Running!", 200
+
+@app.route('/status', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy", "model_loaded": model_data is not None}), 200
+# ------------------------------------------
+
 # Global Variables
 model_data = None
 # Struktur Session: {chat_id: {start_time, duration, predictions, raw_buffer, csv_path, is_stopped}}
@@ -393,4 +403,5 @@ if __name__ == '__main__':
     t = threading.Thread(target=run_flask)
     t.start()
     if TOKEN: run_telegram()
+
     else: print("TOKEN TELEGRAM KOSONG!")
