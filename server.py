@@ -316,6 +316,11 @@ def receive_data():
     try:
         content = request.json
         raw_chunk = np.array(content['data']) 
+        # === TAMBAHAN DEBUGGING (Supaya muncul di Log Railway) ===
+        # Kita print data pertama saja biar log gak meledak
+        if len(raw_chunk) > 0:
+            print(f"[DATA MASUK] {len(raw_chunk)} Sampel. Data #1: {raw_chunk[0]}")
+        # =========================================================
         
         users_done = []
         
@@ -405,3 +410,4 @@ if __name__ == '__main__':
     if TOKEN: run_telegram()
 
     else: print("TOKEN TELEGRAM KOSONG!")
+
