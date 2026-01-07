@@ -254,7 +254,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'predictions': [], 
         'raw_buffer': [],
         'csv_path': filepath,
-        'is_stopped': False # Flag untuk stop manual
+        'is_stopped': False, # Flag untuk stop manual
         # --- TAMBAHAN BARU ---
         'ema_condition': 0.0  # Nilai awal kondisi motor (dianggap sehat/0.0)
         # ---------------------
@@ -455,5 +455,6 @@ if __name__ == '__main__':
     if TOKEN: run_telegram()
 
     else: print("TOKEN TELEGRAM KOSONG!")
+
 
 
