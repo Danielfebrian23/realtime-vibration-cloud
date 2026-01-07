@@ -395,6 +395,26 @@ def receive_data():
                 
                 # Simpan kembali ke sesi untuk loop berikutnya
                 session['ema_condition'] = current_ema
+
+                # === TAMBAHAN: KIRIM NOTIF KE TELEGRAM KALO BAHAYA ===
+                # Jika skor kerusakan > 0.75 (75%) dan belum pernah kirim warning
+                if current_ema > 0.75 and not session.get('warning_sent', False):
+                    
+                    # 1. Tandai biar gak nyepam (kirim sekali aja)
+                    session['warning_sent'] = True 
+                    
+                    # 2. Kirim Pesan Bahaya ke Telegram
+                    import requests
+                    pesan_bahaya = (
+                        "⚠️ **PERINGATAN DINI TERDETEKSI!** ⚠️\n\n"
+                        f"Skor Kerusakan Fisik: **{current_ema*100:.1f}%**\n"
+                        "Sistem mendeteksi tren getaran yang sangat berbahaya secara konsisten.\n"
+                        "Sebaiknya hentikan motor untuk pengecekan fisik."
+                    )
+                    requests.post(
+                        f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
+                        data={'chat_id': chat_id, 'text': pesan_bahaya, 'parse_mode': 'Markdown'}
+                    )
                 
                 # --- CEK KONDISI REAL-TIME (OPSIONAL LOGGING) ---
                 # Sekarang Anda punya variabel 'current_ema' yang sangat akurat!
@@ -455,6 +475,7 @@ if __name__ == '__main__':
     if TOKEN: run_telegram()
 
     else: print("TOKEN TELEGRAM KOSONG!")
+
 
 
 
