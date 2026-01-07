@@ -89,8 +89,30 @@ def predict_chunk(chunk_data):
         features = extract_features_live(chunk_data)
         features_scaled = model_data['scaler'].transform(features)
         features_pca = model_data['pca'].transform(features_scaled)
-        prediction = model_data['model'].predict(features_pca)[0]
-        return prediction
+
+        # --- PERUBAHAN DIMULAI DISINI ---
+        
+        # 1. Ambil Probabilitas (Bukan cuma Label)
+        # Outputnya array, misal: [0.1, 0.8, 0.1] (urutan sesuai classes_)
+        probs = model_data['model'].predict_proba(features_pca)[0]
+        classes = model_data['model'].classes_
+        
+        # 2. Hitung "Skor Kerusakan Fisik" (0.0 s/d 1.0)
+        # Normal = 0.0, Ringan = 0.5, Berat = 1.0
+        damage_score = 0.0
+        
+        for label, prob in zip(classes, probs):
+            if label == 'rusak_berat':
+                damage_score += (prob * 1.0)
+            elif label == 'rusak_ringan':
+                damage_score += (prob * 0.5)
+            # Normal tidak nambah skor (tetap 0)
+        
+        # 3. Ambil Label Dominan (Untuk Laporan Akhir Pie Chart)
+        prediction_label = model_data['model'].predict(features_pca)[0]
+        
+        return prediction_label, damage_score
+        # ---------------------------------------------------------------
     except Exception as e:
         print(f"Error Prediction: {e}")
         return "Error"
@@ -233,6 +255,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'raw_buffer': [],
         'csv_path': filepath,
         'is_stopped': False # Flag untuk stop manual
+        # --- TAMBAHAN BARU ---
+        'ema_condition': 0.0  # Nilai awal kondisi motor (dianggap sehat/0.0)
+        # ---------------------
+        
     }
     
     # Tampilkan tombol STOP saat mulai
@@ -356,8 +382,27 @@ def receive_data():
             while len(session['raw_buffer']) >= 256:
                 window = np.array(session['raw_buffer'][:256])
                 session['raw_buffer'] = session['raw_buffer'][128:] 
-                res = predict_chunk(window)
-                session['predictions'].append(res)
+                # Panggil fungsi baru (terima 2 output: Label & Skor)
+                res_label, raw_score = predict_chunk(window)
+                session['predictions'].append(res_label)
+                
+                # --- IMPLEMENTASI EMA (PENGHALUSAN FISIKA) ---
+                ALPHA = 0.15  # Sensitivitas (0.1 = Sangat Halus, 0.5 = Agresif)
+                
+                # Rumus: Nilai Baru = (Skor Mentah * Alpha) + (Nilai Lama * (1 - Alpha))
+                prev_ema = session['ema_condition']
+                current_ema = (raw_score * ALPHA) + (prev_ema * (1.0 - ALPHA))
+                
+                # Simpan kembali ke sesi untuk loop berikutnya
+                session['ema_condition'] = current_ema
+                
+                # --- CEK KONDISI REAL-TIME (OPSIONAL LOGGING) ---
+                # Sekarang Anda punya variabel 'current_ema' yang sangat akurat!
+                # 0.0 - 0.3 = Sehat
+                # 0.3 - 0.6 = Gejala (Ringan)
+                # > 0.6     = Bahaya (Berat)
+                
+                print(f"Label: {res_label}, Raw: {raw_score:.2f}, Physics-EMA: {current_ema:.2f}")
         
         # Handle User Selesai / Stop
         for chat_id in users_done:
@@ -410,4 +455,5 @@ if __name__ == '__main__':
     if TOKEN: run_telegram()
 
     else: print("TOKEN TELEGRAM KOSONG!")
+
 
