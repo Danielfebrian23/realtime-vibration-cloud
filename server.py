@@ -174,13 +174,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("⏱️ Tes 5 Menit", callback_data='5'),
          InlineKeyboardButton("⏱️ Tes 15 Menit", callback_data='15')],
-        [InlineKeyboardButton("⏱️ Tes 30 Menit", callback_data='30')],
+        [InlineKeyboardButton("⏱️ Tes 30 Menit", callback_data='30'),
+        InlineKeyboardButton("♾️ Mode Bebas", callback_data='60')], # Tombol Baru],
         [InlineKeyboardButton("📊 Cek Status", callback_data='status'),
          InlineKeyboardButton("📈 Cek Sinyal", callback_data='snapshot')] 
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "🛠️ *Sistem Diagnosa Roda Gigi (RF + Clipping)*\n\n"
+        "🛠️ *Sistem Diagnosa Roda Gigi (Dr. Motor)*\n\n"
         "Menu Utama:\n"
         "1. Pilih durasi tes untuk mulai.\n"
         "2. 'Cek Sinyal' untuk memastikan sensor hidup.\n\n"
@@ -228,12 +229,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             count = len(active_sessions[chat_id]['predictions'])
             
             # Tambahkan tombol STOP di status
-            kb_stop = [[InlineKeyboardButton("🛑 Hentikan Sekarang", callback_data='stop')]]
-            
+            kb_control = [
+                [InlineKeyboardButton("🔄 Refresh Status", callback_data='status'),
+                 InlineKeyboardButton("📈 Cek Sinyal", callback_data='snapshot')],
+                [InlineKeyboardButton("🛑 Hentikan Sekarang", callback_data='stop')]
+            ]            
             await query.edit_message_text(
-                f"⏳ *Merekam...*\nWaktu: {elapsed:.1f}/{dur} menit.\nData: {count} segmen.",
+                f"⏳ *Merekam... (Berjalan)*\n"
+                f"⏱ Waktu: {elapsed:.1f} / {dur} menit\n"
+                f"📦 Data: {count} segmen\n\n"
+                "Klik 'Cek Sinyal' untuk memastikan sensor hidup.",
                 parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup(kb_stop)
+                reply_markup=InlineKeyboardMarkup(kb_control)
             )
         else:
             await query.edit_message_text("💤 Tidak ada sesi aktif.")
@@ -262,14 +269,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     
     # Tampilkan tombol STOP saat mulai
-    kb_stop = [[InlineKeyboardButton("🛑 Hentikan Sekarang", callback_data='stop')]]
+    # --- REVISI: MENU LENGKAP SAAT MULAI ---
+    # User butuh tombol Cek Sinyal supaya tenang sensornya nyala
+    kb_control = [
+        [InlineKeyboardButton("📊 Cek Status", callback_data='status'),
+         InlineKeyboardButton("📈 Cek Sinyal", callback_data='snapshot')],
+        [InlineKeyboardButton("🛑 Hentikan Sekarang", callback_data='stop')]
+    ]
     
     await query.edit_message_text(
         f"✅ *Tes {duration} Menit Dimulai!*\n"
         f"💾 Log: `{filename}`\n\n"
-        "Jalan kan motor sekarang. Tekan tombol di bawah jika ingin berhenti lebih awal.",
+        "Motor sedang direkam. Gunakan tombol di bawah untuk memantau kondisi sensor secara real-time.",
         parse_mode='Markdown',
-        reply_markup=InlineKeyboardMarkup(kb_stop)
+        reply_markup=InlineKeyboardMarkup(kb_control)
     )
 
 def generate_final_report(predictions, duration_set, start_time, csv_filename):
@@ -475,6 +488,7 @@ if __name__ == '__main__':
     if TOKEN: run_telegram()
 
     else: print("TOKEN TELEGRAM KOSONG!")
+
 
 
 
