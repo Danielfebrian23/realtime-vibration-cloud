@@ -146,10 +146,10 @@ def generate_final_report(session_data):
     majority_key = 'normal'
     status_label = "NORMAL (SEHAT)"
     
-    if avg_score > 60: 
+    if avg_score > 65: 
         majority_key = 'rusak_berat'
         status_label = "BAHAYA (RUSAK BERAT)"
-    elif avg_score > 30: 
+    elif avg_score > 40: 
         majority_key = 'rusak_ringan'
         status_label = "WARNING (RUSAK RINGAN)"
     
@@ -472,4 +472,5 @@ if __name__ == '__main__':
     t.start()
     if TOKEN: run_telegram()
     else: print("TOKEN KOSONG!")
+
 
