@@ -337,87 +337,120 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @app.route('/raw_data', methods=['POST'])
 def receive_data():
     try:
-        content = request.json
+        # --- PENGAMAN 1: Cek apakah data valid JSON? ---
+        # silent=True bikin dia gak langsung Error 400 kalau datanya rusak, tapi return None
+        content = request.get_json(silent=True) 
+        
+        if not content:
+            # Kalau data kosong/rusak, kita return 400 tapi print alasan biar jelas
+            print("[WARNING] Terima data kosong/corrupt. Skip.")
+            return jsonify({"status": "error", "msg": "Bad JSON"}), 400
+            
+        # --- PENGAMAN 2: Cek apakah ada kunci 'data'? ---
+        if 'data' not in content:
+            print("[WARNING] JSON valid tapi tidak ada key 'data'.")
+            return jsonify({"status": "error", "msg": "No data key"}), 400
+
         raw_chunk = np.array(content['data']) 
         
+        # --- PENGAMAN 3: Cek apakah isinya kosong? ---
+        if len(raw_chunk) == 0:
+            return jsonify({"status": "ok", "msg": "Empty data skipped"}), 200
+
         users_done = []
         
-        for chat_id, session in active_sessions.items():
-            elapsed = (time.time() - session['start_time']) / 60
-            is_time_up = elapsed >= session['duration']
-            is_force_stop = session.get('is_stopped', False)
-            
-            if is_time_up or is_force_stop:
-                users_done.append(chat_id)
-                continue
-            
-            # A. SIMPAN RAW DATA (Field Test)
-            with open(session['csv_path_raw'], 'a', newline='') as f:
-                writer = csv.writer(f, delimiter=';')
-                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                for row in raw_chunk:
-                    x_str = f"{row[0]:.4f}"; y_str = f"{row[1]:.4f}"; z_str = f"{row[2]:.4f}"
-                    writer.writerow([now_str, x_str, y_str, z_str])
-
-            # B. BUFFER & PREDICT
-            session['raw_buffer'].extend(raw_chunk)
-            while len(session['raw_buffer']) >= 256:
-                window = np.array(session['raw_buffer'][:256])
-                session['raw_buffer'] = session['raw_buffer'][128:] 
+        # Lock thread biar gak tabrakan saat nulis file (Optional tapi bagus)
+        with data_lock:
+            for chat_id, session in active_sessions.items():
+                elapsed = (time.time() - session['start_time']) / 60
+                is_time_up = elapsed >= session['duration']
+                is_force_stop = session.get('is_stopped', False)
                 
-                res_label, raw_score = predict_chunk(window)
-                session['predictions'].append(res_label)
+                if is_time_up or is_force_stop:
+                    users_done.append(chat_id)
+                    continue
                 
-                # C. HITUNG EMA (Physics Smoothing)
-                ALPHA = 0.15
-                prev_ema = session['ema_condition']
-                current_ema = (raw_score * ALPHA) + (prev_ema * (1.0 - ALPHA))
-                session['ema_condition'] = current_ema
+                # A. SIMPAN RAW DATA
+                try:
+                    with open(session['csv_path_raw'], 'a', newline='') as f:
+                        writer = csv.writer(f, delimiter=';')
+                        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                        for row in raw_chunk:
+                            # Pastikan row punya 3 elemen (x,y,z)
+                            if len(row) >= 3:
+                                x_str = f"{row[0]:.4f}"; y_str = f"{row[1]:.4f}"; z_str = f"{row[2]:.4f}"
+                                writer.writerow([now_str, x_str, y_str, z_str])
+                except Exception as e:
+                    print(f"[ERROR WRITE CSV] {e}")
 
-                # D. SIMPAN DATA REPORT USER
-                session['history_scores'].append(current_ema * 100)
-                session['history_times'].append(elapsed)
+                # B. BUFFER & PREDICT
+                session['raw_buffer'].extend(raw_chunk)
+                while len(session['raw_buffer']) >= 256:
+                    window = np.array(session['raw_buffer'][:256])
+                    session['raw_buffer'] = session['raw_buffer'][128:] 
+                    
+                    res_label, raw_score = predict_chunk(window)
+                    session['predictions'].append(res_label)
+                    
+                    # C. EMA
+                    ALPHA = 0.15
+                    prev_ema = session['ema_condition']
+                    current_ema = (raw_score * ALPHA) + (prev_ema * (1.0 - ALPHA))
+                    session['ema_condition'] = current_ema
 
-                with open(session['csv_path_report'], 'a', newline='') as f:
-                    writer = csv.writer(f, delimiter=';')
-                    jam = datetime.now().strftime('%H:%M:%S')
-                    writer.writerow([jam, f"{current_ema * 100:.1f}%", res_label.upper()])
-                
-                # E. EARLY WARNING SYSTEM
-                if current_ema > 0.75 and not session.get('warning_sent', False):
-                    session['warning_sent'] = True 
-                    import requests
-                    requests.post(
-                        f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
-                        data={'chat_id': chat_id, 'text': "⚠️ **BAHAYA DETECTED!**\nSegera cek motor!", 'parse_mode': 'Markdown'}
-                    )
+                    # D. REPORT USER
+                    session['history_scores'].append(current_ema * 100)
+                    session['history_times'].append(elapsed)
+
+                    try:
+                        with open(session['csv_path_report'], 'a', newline='') as f:
+                            writer = csv.writer(f, delimiter=';')
+                            jam = datetime.now().strftime('%H:%M:%S')
+                            writer.writerow([jam, f"{current_ema * 100:.1f}%", res_label.upper()])
+                    except Exception as e:
+                        print(f"[ERROR REPORT] {e}")
+                    
+                    # E. WARNING
+                    if current_ema > 0.75 and not session.get('warning_sent', False):
+                        session['warning_sent'] = True 
+                        import requests
+                        try:
+                            requests.post(
+                                f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
+                                data={'chat_id': chat_id, 'text': "⚠️ **BAHAYA DETECTED!**", 'parse_mode': 'Markdown'},
+                                timeout=5 # Timeout biar server gak bengong
+                            )
+                        except: pass
         
-        # Handle Selesai
+        # Handle Selesai (Di luar lock biar gak nge-block data masuk)
         for chat_id in users_done:
             session = active_sessions.pop(chat_id)
-            report_txt, chart = generate_final_report(session)
-            
-            import requests
-            # 1. Kirim Grafik & Saran Lengkap
-            if chart:
-                requests.post(f"https://api.telegram.org/bot{TOKEN}/sendPhoto", 
-                    files={'photo': chart}, data={'chat_id': chat_id, 'caption': report_txt, 'parse_mode': 'Markdown'})
-            
-            # 2. Kirim File Laporan User (Readable)
-            with open(session['csv_path_report'], 'rb') as f:
-                requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", 
-                    data={'chat_id': chat_id, 'caption': "📄 Laporan User"}, files={'document': f})
+            try:
+                report_txt, chart = generate_final_report(session)
+                import requests
+                
+                # Kirim-kirim Telegram
+                if chart:
+                    requests.post(f"https://api.telegram.org/bot{TOKEN}/sendPhoto", 
+                        files={'photo': chart}, data={'chat_id': chat_id, 'caption': report_txt, 'parse_mode': 'Markdown'})
+                
+                with open(session['csv_path_report'], 'rb') as f:
+                    requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", 
+                        data={'chat_id': chat_id, 'caption': "📄 Laporan User"}, files={'document': f})
 
-            # 3. Kirim File Raw Field Test (Data Mentah)
-            with open(session['csv_path_raw'], 'rb') as f:
-                requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", 
-                    data={'chat_id': chat_id, 'caption': "💾 Data Mentah (Field Test)"}, files={'document': f})
+                with open(session['csv_path_raw'], 'rb') as f:
+                    requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", 
+                        data={'chat_id': chat_id, 'caption': "💾 Data Mentah"}, files={'document': f})
+            except Exception as e:
+                print(f"[ERROR FINALIZE] {e}")
 
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"status": "error"}), 500
+        # Print error lengkap biar tau kenapa 500
+        import traceback
+        traceback.print_exc() 
+        return jsonify({"status": "error", "details": str(e)}), 500
 
 # ==============================================================================
 # MAIN
@@ -439,3 +472,4 @@ if __name__ == '__main__':
     t.start()
     if TOKEN: run_telegram()
     else: print("TOKEN KOSONG!")
+
