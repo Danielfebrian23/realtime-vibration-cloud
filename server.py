@@ -336,6 +336,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==============================================================================
 @app.route('/raw_data', methods=['POST'])
 def receive_data():
+    # [1] STOPWATCH TOTAL START (Saat data baru nyampe pintu server)
+    start_total_pipeline = time.time()  # <--- TAMBAH INI
+
     try:
         # --- PENGAMAN 1: Cek apakah data valid JSON? ---
         # silent=True bikin dia gak langsung Error 400 kalau datanya rusak, tapi return None
@@ -385,11 +388,19 @@ def receive_data():
 
                 # B. BUFFER & PREDICT
                 session['raw_buffer'].extend(raw_chunk)
-                while len(session['raw_buffer']) >= 256:
+                if len(session['raw_buffer']) >= 256:
                     window = np.array(session['raw_buffer'][:256])
                     session['raw_buffer'] = session['raw_buffer'][128:] 
+
+                    # [2] STOPWATCH AI START (Mau mulai mikir)
+                    start_ai_inference = time.time() # <--- TAMBAH INI
                     
                     res_label, raw_score = predict_chunk(window)
+
+                    # [3] STOPWATCH AI STOP (Selesai mikir)
+                    end_ai_inference = time.time()   # <--- TAMBAH INI
+                    ai_latency = end_ai_inference - start_ai_inference # <--- HITUNG LATENCY AI
+
                     session['predictions'].append(res_label)
                     
                     # C. EMA
@@ -414,6 +425,10 @@ def receive_data():
                     if current_ema > 0.75 and not session.get('warning_sent', False):
                         session['warning_sent'] = True 
                         import requests
+
+                        # [4] STOPWATCH TELEGRAM START
+                        start_tele = time.time() # <--- TAMBAH INI 
+                           
                         try:
                             requests.post(
                                 f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
@@ -421,6 +436,19 @@ def receive_data():
                                 timeout=5 # Timeout biar server gak bengong
                             )
                         except: pass
+
+                        # [5] STOPWATCH TELEGRAM STOP
+                        end_tele = time.time() # <--- TAMBAH INI
+                        tele_latency = end_tele - start_tele # <--- HITUNG LATENCY TELEGRAM
+                        
+                        # CETAK LOG KHUSUS SAAT BAHAYA (PENTING BUAT SKRIPSI)
+                        print(f"\n[LATENCY TEST - DANGER DETECTED]")
+                        print(f" > AI Inference Time : {ai_latency:.6f} s")
+                        print(f" > Telegram API Delay: {tele_latency:.6f} s")
+                        
+                    # CETAK LOG REGULER (Setiap kali prediksi jalan)
+                    # Biar log server lu penuh data valid buat tabel skripsi
+                    print(f"[PERFORMANCE] AI Process: {ai_latency:.6f} s | Status: {res_label}")
         
         # Handle Selesai (Di luar lock biar gak nge-block data masuk)
         for chat_id in users_done:
@@ -443,6 +471,13 @@ def receive_data():
                         data={'chat_id': chat_id, 'caption': "💾 Data Mentah"}, files={'document': f})
             except Exception as e:
                 print(f"[ERROR FINALIZE] {e}")
+
+        # [6] STOPWATCH TOTAL STOP (Semua proses selesai)
+        end_total_pipeline = time.time() # <--- TAMBAH INI
+        total_latency = end_total_pipeline - start_total_pipeline # <--- HITUNG TOTAL
+        
+        # Opsi: Print total latency kalau mau detail banget
+        print(f"[SERVER LOAD] Total Request Processing: {total_latency:.6f} s")    
 
         return jsonify({"status": "ok"}), 200
 
