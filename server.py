@@ -453,6 +453,11 @@ def receive_data():
         # Handle Selesai (Di luar lock biar gak nge-block data masuk)
         for chat_id in users_done:
             session = active_sessions.pop(chat_id)
+            print(f"\n[INFO] Memulai Finalisasi Laporan untuk {chat_id}...")
+
+            # [1] STOPWATCH MULAI (Saat sesi dinyatakan selesai)
+            start_finalize_time = time.time()
+            
             try:
                 report_txt, chart = generate_final_report(session)
                 import requests
@@ -462,13 +467,30 @@ def receive_data():
                     requests.post(f"https://api.telegram.org/bot{TOKEN}/sendPhoto", 
                         files={'photo': chart}, data={'chat_id': chat_id, 'caption': report_txt, 'parse_mode': 'Markdown'})
                 
+                # 2. Kirim File CSV Laporan
                 with open(session['csv_path_report'], 'rb') as f:
                     requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", 
                         data={'chat_id': chat_id, 'caption': "📄 Laporan User"}, files={'document': f})
-
+                
+                # 3. Kirim File CSV Raw Data
                 with open(session['csv_path_raw'], 'rb') as f:
                     requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", 
                         data={'chat_id': chat_id, 'caption': "💾 Data Mentah"}, files={'document': f})
+                
+                # [2] STOPWATCH SELESAI (Semua file terkirim)
+                end_finalize_time = time.time()
+                
+                # HITUNG DURASI
+                finalization_latency = end_finalize_time - start_finalize_time
+                
+                # CETAK UNTUK DATA SKRIPSI
+                print("="*50)
+                print(f"[PERFORMANCE TEST] REPORT GENERATION LATENCY")
+                print(f"User ID       : {chat_id}")
+                print(f"Durasi Tes    : {session['duration']} Menit")
+                print(f"Waktu Proses  : {finalization_latency:.4f} detik")
+                print("="*50)
+                    
             except Exception as e:
                 print(f"[ERROR FINALIZE] {e}")
 
@@ -507,5 +529,6 @@ if __name__ == '__main__':
     t.start()
     if TOKEN: run_telegram()
     else: print("TOKEN KOSONG!")
+
 
 
