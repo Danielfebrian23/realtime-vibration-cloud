@@ -80,6 +80,10 @@ def predict_chunk(chunk_data):
         features_scaled = model_data['scaler'].transform(features)
         features_pca = model_data['pca'].transform(features_scaled)
         
+        # --- TAMBAHAN LOG DEMO ---
+        print(f"[2. PRE-PROCESSING] Ekstraksi spektrum FFT berhasil ({features.shape[1]} dimensi fitur).")
+        print(f"[3. REDUKSI PCA] Fitur dipadatkan menjadi {features_pca.shape[1]} Komponen Utama.")
+
         # 1. Ambil Probabilitas
         probs = model_data['model'].predict_proba(features_pca)[0]
         classes = model_data['model'].classes_
@@ -94,7 +98,11 @@ def predict_chunk(chunk_data):
         
         # 3. Ambil Label Utama
         prediction_label = model_data['model'].predict(features_pca)[0]
-        
+        confidence = max(probs) * 100
+
+        # --- TAMBAHAN LOG DEMO ---
+        print(f"[4. RANDOM FOREST] Hasil Prediksi : {prediction_label.upper()} (Akurasi: {confidence:.2f}%)")
+
         return prediction_label, damage_score
     except Exception as e:
         print(f"Error Prediction: {e}")
@@ -360,6 +368,11 @@ def receive_data():
         if len(raw_chunk) == 0:
             return jsonify({"status": "ok", "msg": "Empty data skipped"}), 200
 
+        # --- TAMBAHAN LOG DEMO (HEADER) ---
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] ==========================================")
+        print(f"[1. RECEIVE] Batch Size Diterima: {len(raw_chunk)} baris x 3 kolom (Sumbu X, Y, Z)")
+        # ----------------------------------
+
         users_done = []
         
         # Lock thread biar gak tabrakan saat nulis file (Optional tapi bagus)
@@ -448,16 +461,11 @@ def receive_data():
                         
                     # CETAK LOG REGULER (Setiap kali prediksi jalan)
                     # Biar log server lu penuh data valid buat tabel skripsi
-                    print(f"[PERFORMANCE] AI Process: {ai_latency:.6f} s | Status: {res_label}")
+                    print(f"[5. LATENSI AI] Waktu Komputasi Internal: {ai_latency:.4f} detik")
         
         # Handle Selesai (Di luar lock biar gak nge-block data masuk)
         for chat_id in users_done:
             session = active_sessions.pop(chat_id)
-            print(f"\n[INFO] Memulai Finalisasi Laporan untuk {chat_id}...")
-
-            # [1] STOPWATCH MULAI (Saat sesi dinyatakan selesai)
-            start_finalize_time = time.time()
-            
             try:
                 report_txt, chart = generate_final_report(session)
                 import requests
@@ -467,30 +475,13 @@ def receive_data():
                     requests.post(f"https://api.telegram.org/bot{TOKEN}/sendPhoto", 
                         files={'photo': chart}, data={'chat_id': chat_id, 'caption': report_txt, 'parse_mode': 'Markdown'})
                 
-                # 2. Kirim File CSV Laporan
                 with open(session['csv_path_report'], 'rb') as f:
                     requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", 
                         data={'chat_id': chat_id, 'caption': "📄 Laporan User"}, files={'document': f})
-                
-                # 3. Kirim File CSV Raw Data
+
                 with open(session['csv_path_raw'], 'rb') as f:
                     requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", 
                         data={'chat_id': chat_id, 'caption': "💾 Data Mentah"}, files={'document': f})
-                
-                # [2] STOPWATCH SELESAI (Semua file terkirim)
-                end_finalize_time = time.time()
-                
-                # HITUNG DURASI
-                finalization_latency = end_finalize_time - start_finalize_time
-                
-                # CETAK UNTUK DATA SKRIPSI
-                print("="*50)
-                print(f"[PERFORMANCE TEST] REPORT GENERATION LATENCY")
-                print(f"User ID       : {chat_id}")
-                print(f"Durasi Tes    : {session['duration']} Menit")
-                print(f"Waktu Proses  : {finalization_latency:.4f} detik")
-                print("="*50)
-                    
             except Exception as e:
                 print(f"[ERROR FINALIZE] {e}")
 
@@ -498,9 +489,9 @@ def receive_data():
         end_total_pipeline = time.time() # <--- TAMBAH INI
         total_latency = end_total_pipeline - start_total_pipeline # <--- HITUNG TOTAL
         
-        # Opsi: Print total latency kalau mau detail banget
-        print(f"[SERVER LOAD] Total Request Processing: {total_latency:.6f} s")    
-
+        print(f"[6. LATENSI TOTAL] Total Waktu Eksekusi Server: {total_latency:.4f} detik")    
+        print("=======================================================================\n")
+        
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
@@ -529,6 +520,5 @@ if __name__ == '__main__':
     t.start()
     if TOKEN: run_telegram()
     else: print("TOKEN KOSONG!")
-
 
 
