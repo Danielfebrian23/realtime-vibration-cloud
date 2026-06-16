@@ -16,9 +16,9 @@ from scipy.fft import fft
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# ==============================================================================
-# KONFIGURASI
-# ==============================================================================
+
+# =================================== KONFIGURASI ==========================================
+
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 AUTHORIZED_USER_ID = os.getenv("AUTHORIZED_USER_ID") 
 MODEL_PATH = "MODEL_SIAP_DEPLOY.pkl"
@@ -36,14 +36,13 @@ def index(): return "Server Running!", 200
 @app.route('/status', methods=['GET'])
 def health_check(): return jsonify({"status": "healthy"}), 200
 
-# Global Variables
+# vARIABEL GLOBAL
 model_data = None
 active_sessions = {} 
 data_lock = threading.Lock()
 
-# ==============================================================================
-# 1. LOAD MODEL
-# ==============================================================================
+# ================================= 1. PEMUATAN MODEL ===========================================
+
 def load_model():
     global model_data
     try:
@@ -53,11 +52,10 @@ def load_model():
         print(f"[CRITICAL ERROR] Gagal load model: {e}")
         model_data = None
 
-# ==============================================================================
-# 2. FEATURE EXTRACTION & PREDICTION
-# ==============================================================================
+# ================================= 2. EKSTRAKSI FITUR DAN PREDIKSI  ===========================================
+
 def extract_features_live(signal_data):
-    # CLIPPING (Jurus Anti-Jalan Rusak/Polisi Tidur)
+    # CLIPPING (Untuk antisipasi Jalan Rusak/Polisi Tidur)
     signal_clip = np.clip(signal_data, -5.0, 5.0)
     wx = signal_clip[:, 0]; wy = signal_clip[:, 1]; wz = signal_clip[:, 2]
     
@@ -80,7 +78,6 @@ def predict_chunk(chunk_data):
         features_scaled = model_data['scaler'].transform(features)
         features_pca = model_data['pca'].transform(features_scaled)
         
-        # --- TAMBAHAN LOG DEMO ---
         print(f"[2. PRE-PROCESSING] Ekstraksi spektrum FFT berhasil ({features.shape[1]} dimensi fitur).")
         print(f"[3. REDUKSI PCA] Fitur dipadatkan menjadi {features_pca.shape[1]} Komponen Utama.")
 
@@ -100,17 +97,16 @@ def predict_chunk(chunk_data):
         prediction_label = model_data['model'].predict(features_pca)[0]
         confidence = max(probs) * 100
 
-        # --- TAMBAHAN LOG DEMO ---
+        # Log Hasil Prediksi 
         print(f"[4. RANDOM FOREST] Hasil Prediksi : {prediction_label.upper()} (Akurasi: {confidence:.2f}%)")
 
         return prediction_label, damage_score
     except Exception as e:
         print(f"Error Prediction: {e}")
         return "Error", 0.0
+    
+# ================================= 3. VISUALISASI SINYAL  ===========================================
 
-# ==============================================================================
-# 3. VISUALISASI SINYAL (SNAPSHOT)
-# ==============================================================================
 def generate_waveform_snapshot(data_chunk):
     plt.figure(figsize=(8, 4))
     plt.plot(data_chunk[:, 0], label='X', color='r', alpha=0.7)
@@ -134,9 +130,8 @@ def generate_waveform_snapshot(data_chunk):
         
     return img_io, status_text
 
-# ==============================================================================
-# 4. GENERATE LAPORAN AKHIR (GABUNGAN GRAFIK TREN + TEKS SARAN)
-# ==============================================================================
+# ================================= 4. TAMPILAN PESAN NOTIFIKASI (GABUNGAN GRAFIK TREN + TEKS SARAN)   ===========================================
+
 def generate_final_report(session_data):
     scores = session_data['history_scores'] # List skor 0-100
     times = session_data['history_times']   # List waktu (menit)
@@ -149,7 +144,7 @@ def generate_final_report(session_data):
     avg_score = np.mean(scores)
     max_score = np.max(scores)
     
-    # 2. Tentukan Status Akhir (Logika Fisika EMA)
+    # 2. Ditentukan Status Akhir (Logika Fisika EMA)
     # < 30% = Normal, 30-60% = Rusak Ringan, > 60% = Rusak Berat
     majority_key = 'normal'
     status_label = "NORMAL (SEHAT)"
@@ -162,7 +157,6 @@ def generate_final_report(session_data):
         status_label = "WARNING (RUSAK RINGAN)"
     
     # 3. BIKIN GRAFIK TREN KESEHATAN (Line Chart)
-    # Ini lebih baik dari Pie Chart untuk melihat kapan rusaknya terjadi
     plt.figure(figsize=(10, 6)) # Agak tinggi biar jelas
     plt.plot(times, scores, color='blue', linewidth=2, label='Kondisi Motor')
     
@@ -184,7 +178,7 @@ def generate_final_report(session_data):
     img_io.seek(0)
     plt.close()
 
-    # 4. TEKS SARAN LENGKAP (Dari snippet kamu)
+    # 4. TEKS SARAN LENGKAP 
     tips_map = {
         'normal': (
             "✅ **KONDISI: NORMAL (SEHAT)**\n"
@@ -227,9 +221,8 @@ def generate_final_report(session_data):
     
     return text, img_io
 
-# ==============================================================================
-# 5. TELEGRAM BOT LOGIC
-# ==============================================================================
+# ================================= 5. MEKANISME TELEGRAM BOT  ===========================================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if AUTHORIZED_USER_ID and user_id != AUTHORIZED_USER_ID:
@@ -339,43 +332,42 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_control)
     )
 
-# ==============================================================================
-# 6. FLASK ENDPOINT (MERGED LOGIC)
-# ==============================================================================
+# ================================= 6. FLASK ENDPOINT  ===========================================
+
 @app.route('/raw_data', methods=['POST'])
 def receive_data():
-    # [1] STOPWATCH TOTAL START (Saat data baru nyampe pintu server)
-    start_total_pipeline = time.time()  # <--- TAMBAH INI
+    # [1] STOPWATCH TOTAL START 
+    start_total_pipeline = time.time()  
 
     try:
-        # --- PENGAMAN 1: Cek apakah data valid JSON? ---
-        # silent=True bikin dia gak langsung Error 400 kalau datanya rusak, tapi return None
+        # --- PENGAMAN 1: Pengecekan validitas data JSON ---
+        # silent=True agar program tidak langsung Error 400 kalau datanya rusak, tapi return None
         content = request.get_json(silent=True) 
         
         if not content:
-            # Kalau data kosong/rusak, kita return 400 tapi print alasan biar jelas
+            # Jika data kosong/rusak, di return 400 tapi print alasan biar jelas
             print("[WARNING] Terima data kosong/corrupt. Skip.")
             return jsonify({"status": "error", "msg": "Bad JSON"}), 400
             
-        # --- PENGAMAN 2: Cek apakah ada kunci 'data'? ---
+        # --- PENGAMAN 2: Pengecekan kunci data  ---
         if 'data' not in content:
             print("[WARNING] JSON valid tapi tidak ada key 'data'.")
             return jsonify({"status": "error", "msg": "No data key"}), 400
 
         raw_chunk = np.array(content['data']) 
         
-        # --- PENGAMAN 3: Cek apakah isinya kosong? ---
+        # --- PENGAMAN 3: Pengecekan kekosongan isi ---
         if len(raw_chunk) == 0:
             return jsonify({"status": "ok", "msg": "Empty data skipped"}), 200
 
-        # --- TAMBAHAN LOG DEMO (HEADER) ---
+        # Log Header ---
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] ==========================================")
         print(f"[1. RECEIVE] Batch Size Diterima: {len(raw_chunk)} baris x 3 kolom (Sumbu X, Y, Z)")
         # ----------------------------------
 
         users_done = []
         
-        # Lock thread biar gak tabrakan saat nulis file (Optional tapi bagus)
+        # Lock thread biar gak tabrakan saat nulis file 
         with data_lock:
             for chat_id, session in active_sessions.items():
                 elapsed = (time.time() - session['start_time']) / 60
@@ -392,7 +384,7 @@ def receive_data():
                         writer = csv.writer(f, delimiter=';')
                         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
                         for row in raw_chunk:
-                            # Pastikan row punya 3 elemen (x,y,z)
+                            # Dipastikan row memiliki 3 elemen (x,y,z)
                             if len(row) >= 3:
                                 x_str = f"{row[0]:.4f}"; y_str = f"{row[1]:.4f}"; z_str = f"{row[2]:.4f}"
                                 writer.writerow([now_str, x_str, y_str, z_str])
@@ -405,14 +397,14 @@ def receive_data():
                     window = np.array(session['raw_buffer'][:256])
                     session['raw_buffer'] = session['raw_buffer'][128:] 
 
-                    # [2] STOPWATCH AI START (Mau mulai mikir)
-                    start_ai_inference = time.time() # <--- TAMBAH INI
+                    # [2] STOPWATCH AI START 
+                    start_ai_inference = time.time()
                     
                     res_label, raw_score = predict_chunk(window)
 
                     # [3] STOPWATCH AI STOP (Selesai mikir)
-                    end_ai_inference = time.time()   # <--- TAMBAH INI
-                    ai_latency = end_ai_inference - start_ai_inference # <--- HITUNG LATENCY AI
+                    end_ai_inference = time.time()   
+                    ai_latency = end_ai_inference - start_ai_inference # Perhitungan Latensi AI
 
                     session['predictions'].append(res_label)
                     
@@ -440,30 +432,30 @@ def receive_data():
                         import requests
 
                         # [4] STOPWATCH TELEGRAM START
-                        start_tele = time.time() # <--- TAMBAH INI 
+                        start_tele = time.time()  
                            
                         try:
                             requests.post(
                                 f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
                                 data={'chat_id': chat_id, 'text': "⚠️ **BAHAYA DETECTED!**", 'parse_mode': 'Markdown'},
-                                timeout=5 # Timeout biar server gak bengong
+                                timeout=5 # Timeout agar server terus aktif 
                             )
                         except: pass
 
                         # [5] STOPWATCH TELEGRAM STOP
-                        end_tele = time.time() # <--- TAMBAH INI
-                        tele_latency = end_tele - start_tele # <--- HITUNG LATENCY TELEGRAM
+                        end_tele = time.time() 
+                        tele_latency = end_tele - start_tele # <--- PERHITUNGAN LATENSI TELEGRAM
                         
-                        # CETAK LOG KHUSUS SAAT BAHAYA (PENTING BUAT SKRIPSI)
+                        # PENCETAKAN LOG KHUSUS SAAT ADA BAHAYA  
                         print(f"\n[LATENCY TEST - DANGER DETECTED]")
                         print(f" > AI Inference Time : {ai_latency:.6f} s")
                         print(f" > Telegram API Delay: {tele_latency:.6f} s")
                         
                     # CETAK LOG REGULER (Setiap kali prediksi jalan)
-                    # Biar log server lu penuh data valid buat tabel skripsi
+                    # Agar Log Server dipennuhi data valid
                     print(f"[5. LATENSI AI] Waktu Komputasi Internal: {ai_latency:.4f} detik")
         
-        # Handle Selesai (Di luar lock biar gak nge-block data masuk)
+        # Handle Selesai (Di luar lock agar data masuk tidak ter-block)
         for chat_id in users_done:
             session = active_sessions.pop(chat_id)
             try:
@@ -486,7 +478,7 @@ def receive_data():
                 print(f"[ERROR FINALIZE] {e}")
 
         # [6] STOPWATCH TOTAL STOP (Semua proses selesai)
-        end_total_pipeline = time.time() # <--- TAMBAH INI
+        end_total_pipeline = time.time() 
         total_latency = end_total_pipeline - start_total_pipeline # <--- HITUNG TOTAL
         
         print(f"[6. LATENSI TOTAL] Total Waktu Eksekusi Server: {total_latency:.4f} detik")    
@@ -495,14 +487,13 @@ def receive_data():
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
-        # Print error lengkap biar tau kenapa 500
+        # Print error lengkap agar dapat diketahui kenapa 500
         import traceback
         traceback.print_exc() 
         return jsonify({"status": "error", "details": str(e)}), 500
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
+# ================================= MAIN  ===========================================
+
 def run_flask():
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
